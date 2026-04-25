@@ -170,6 +170,8 @@ class OptimizeRequest(CamelModel):
     fuel_cost: float = Field(default=0.82, alias="fuelCost")
     delay_penalty: float = Field(default=14_000, alias="delayPenalty")
     carbon_cost: float = Field(default=5_000, alias="carbonCost")
+    cargo_type: str = Field(default="bulk", alias="cargoType")
+    container_count: int = Field(default=1, alias="containerCount")
     risk_injections: List[RiskInjection] = Field(default_factory=list, alias="riskInjections")
 
 
@@ -500,7 +502,7 @@ async def process_risk_with_gemini(news_data: str, weather_data: str, weather_st
         "Return ONLY a JSON object with exactly these keys:\n"
         '  "risk_score": number 0.0-1.0 (probability of significant operational disruption),\n'
         '  "friction_coefficient": number 0.0-1.5 (multiplicative delay/fuel penalty),\n'
-        '  "reasoning_log": single concise sentence (max 25 words) summarizing the dominant risk.\n\n'
+        '  "reasoning_log": single concise sentence (max 60 words) summarizing the dominant risk.\n\n'
         f"News:\n{news_data[:2000]}\n\nWeather:\n{weather_data[:500]}\n"
     )
     try:
@@ -1077,6 +1079,8 @@ def optimize(request: OptimizeRequest) -> OptimizeResponse:
         optimized_segments,
         request.delay_penalty,
         request.carbon_cost,
+        request.cargo_type,
+        request.container_count,
     )
     shadow_route = build_shadow_route_from_path(path, total_weight, comparison)
     return OptimizeResponse(path=path, totalWeight=round(total_weight, 2), segments=optimized_segments, shadowRoute=shadow_route)

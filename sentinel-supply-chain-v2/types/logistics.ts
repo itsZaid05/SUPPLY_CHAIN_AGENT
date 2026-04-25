@@ -155,6 +155,8 @@ export interface OptimizeRouteRequest {
   fuelCost: number;
   delayPenalty: number;
   carbonCost: number;
+  cargoType?: CargoType;
+  containerCount?: number;
   riskInjections: RiskInjection[];
 }
 

@@ -2,6 +2,7 @@
 
 import { Activity, AlertTriangle, CheckCircle2, Ship } from "lucide-react";
 import type { DashboardStatus, ManifestLeg } from "@/types/logistics";
+import { stableManifest } from "@/lib/mock-data";
 
 interface ManifestPanelProps {
   manifest: ManifestLeg[];
@@ -40,6 +41,8 @@ export function ManifestPanel({ manifest, dashboardStatus, isBusy }: ManifestPan
     ? (manifest.reduce((s, l) => s + l.riskScore, 0) / manifest.length).toFixed(2)
     : "0.00";
   const totalHours = manifest.reduce((s, l) => s + l.etaHours, 0);
+  const baselineHours = stableManifest.reduce((s, l) => s + l.etaHours, 0);
+  const showRerouteDelta = dashboardStatus === "Rerouted" && totalHours !== baselineHours;
 
   return (
     <section className="war-panel flex h-full flex-col overflow-hidden">
@@ -54,7 +57,9 @@ export function ManifestPanel({ manifest, dashboardStatus, isBusy }: ManifestPan
           {/* Summary chips */}
           <div className="grid grid-cols-3 gap-1.5">
             <div className="rounded-lg border border-white/8 bg-slate-900/50 px-2 py-1.5 text-center">
-              <div className="text-sm font-bold text-slate-100">{totalHours}h</div>
+              <div className="text-sm font-bold text-slate-100">
+                {showRerouteDelta ? `${baselineHours}h → ${totalHours}h` : `${totalHours}h`}
+              </div>
               <div className="text-[9px] text-slate-600 uppercase tracking-wider">Transit</div>
             </div>
             <div className="rounded-lg border border-white/8 bg-slate-900/50 px-2 py-1.5 text-center">
