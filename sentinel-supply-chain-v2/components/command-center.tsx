@@ -85,7 +85,8 @@ const applyAnalysesToManifest = (base: ManifestLeg[], analyses: HubRiskAnalysis[
 type ActivePanel = "map" | "terminal";
 
 export function CommandCenter() {
-  const monitoringIntervalMs = 15_000;
+  const monitoringIntervalMs = 60_000;
+  const maxMonitoringCalls = 3;
   const [dashboardStatus, setDashboardStatus] = useState<DashboardStatus>("Normal");
   const [manifest, setManifest] = useState<ManifestLeg[]>(stableManifest);
   const [terminalLines, setTerminalLines] = useState<TerminalEntry[]>(initialTerminalEntries);
@@ -101,7 +102,8 @@ export function CommandCenter() {
   const [explanation, setExplanation] = useState<RouteExplanation | null>(null);
   const [isLoadingExplanation, setIsLoadingExplanation] = useState(false);
   const [activePanel, setActivePanel] = useState<ActivePanel>("map");
-  const [monitoringMode, setMonitoringMode] = useState(true);
+  const [monitoringMode, setMonitoringMode] = useState(false);
+  const [monitoringCallCount, setMonitoringCallCount] = useState(0);
   const [lastScenario, setLastScenario] = useState<ScenarioConfig>({
     origin: "Shanghai",
     destination: "Rotterdam",
@@ -315,8 +317,14 @@ export function CommandCenter() {
   // ─── Continuous monitoring ───────────────────────────────────────────────
   useEffect(() => {
     if (!monitoringMode || dashboardStatus === "Analyzing") return;
+    if (monitoringCallCount >= maxMonitoringCalls) {
+      setMonitoringMode(false);
+      setTerminalQueue((c) => [...c, createEntry("Monitoring quota reached. Manual trigger required.", "system", "warning")]);
+      return;
+    }
     const timer = setInterval(async () => {
       try {
+        setMonitoringCallCount((count) => count + 1);
         const analyzeReq = defaultAnalyzeRouteRequest([], 0, lastScenario);
         analyzeReq.currentRoute = activeRouteNodes;
         analyzeReq.hubs = activeRouteNodes;
@@ -337,7 +345,7 @@ export function CommandCenter() {
     }, monitoringIntervalMs);
 
     return () => clearInterval(timer);
-  }, [activeRouteNodes, dashboardStatus, lastScenario, monitoringIntervalMs, monitoringMode]);
+  }, [activeRouteNodes, dashboardStatus, lastScenario, maxMonitoringCalls, monitoringCallCount, monitoringIntervalMs, monitoringMode]);
 
   // ─── Derived state ───────────────────────────────────────────────────────
   const currentTransitHours = useMemo(
@@ -352,8 +360,8 @@ export function CommandCenter() {
     [activeRouteNodes, shadowRouteNodes, hubAnalyses],
   );
   const scenarioComparisons: ScenarioComparison[] = useMemo(
-    () => compareDisruptionScenarios(activeRouteNodes, shadowRouteNodes),
-    [activeRouteNodes, shadowRouteNodes],
+    () => compareDisruptionScenarios(activeRouteNodes, shadowRouteNodes, hubAnalyses, 14_000, lastScenario.containerCount >= 250 ? 1.4 : 1.0),
+    [activeRouteNodes, shadowRouteNodes, hubAnalyses, lastScenario.containerCount],
   );
   const currentResilienceScore = rankedRoutes.find((route) => route.nodes.join("→") === activeRouteNodes.join("→"))?.resilienceScore
     ?? rankedRoutes[0]?.resilienceScore
@@ -439,7 +447,7 @@ export function CommandCenter() {
                     : "border-white/10 bg-slate-950/50 text-slate-400"
                 }`}
               >
-                {monitoringMode ? "Monitoring Mode: ON" : "Monitoring Mode: OFF"}
+                {monitoringMode ? `Monitoring Mode: ON (${Math.min(monitoringCallCount, maxMonitoringCalls)}/${maxMonitoringCalls})` : "Monitoring Mode: OFF"}
               </button>
             </div>
           </div>

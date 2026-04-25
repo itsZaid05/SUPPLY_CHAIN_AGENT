@@ -766,8 +766,8 @@ def calculate_comparison(
     effective_penalty = delay_penalty * cargo_multiplier * max(1, container_count / 100)
 
     current_base_transit = route_transit_hours(current_route)
-    current_delay_hours = int(round(sum(seg.risk_score * 42 for seg in current_segments if seg.risk_score >= 0.45)))
-    prescribed_delay_hours = int(round(sum(seg.risk_score * 18 for seg in optimized_segments if seg.risk_score >= 0.45)))
+    current_delay_hours = int(round(sum(seg.risk_score * 42 for seg in current_segments if seg.risk_score >= 0.40)))
+    prescribed_delay_hours = int(round(sum(seg.risk_score * 18 for seg in optimized_segments if seg.risk_score >= 0.40)))
 
     current_transit_hours = current_base_transit + current_delay_hours
     opt_route = [optimized_segments[0].from_node, *[s.to_node for s in optimized_segments]]
@@ -785,7 +785,13 @@ def calculate_comparison(
 
     current_dist = route_distance_nm(current_route)
     prescribed_dist = route_distance_nm(opt_route)
-    roi = round(cost_avoided_usd / max(prescribed_penalty_usd, 1), 2) if prescribed_penalty_usd > 0 else round(cost_avoided_usd / max(effective_penalty * 0.01, 1), 2)
+    roi = 1.0
+    if cost_avoided_usd > 0:
+        roi = round(
+            (cost_avoided_usd + prescribed_penalty_usd) / max(prescribed_penalty_usd, cost_avoided_usd * 0.1, 1),
+            1,
+        )
+        roi = min(roi, 99.0)
 
     return ComparisonMatrix(
         currentDelayHours=current_delay_hours,
