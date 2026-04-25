@@ -70,6 +70,9 @@ class HubRiskAnalysis(CamelModel):
     lon: float
     risk_score: float = Field(alias="riskScore")
     friction_coefficient: float = Field(alias="frictionCoefficient")
+    confidence: float
+    congestion_factor: float = Field(alias="congestionFactor")
+    is_cascade_affected: bool = Field(alias="isCascadeAffected")
     reasoning_log: str = Field(alias="reasoningLog")
     status: str
     news_summary: str = Field(alias="newsSummary")
@@ -287,6 +290,7 @@ LEG_BLUEPRINTS: Dict[frozenset, Dict[str, Any]] = {
 }
 
 DEFAULT_ROUTE = ["Shanghai", "Singapore", "Suez", "Rotterdam"]
+OCEAN_SPEED_KT = 18.5
 
 # ─── App ─────────────────────────────────────────────────────────────────────
 
@@ -677,12 +681,25 @@ async def analyze_hub(
         friction = max(friction, cascade_risk_override * 0.7)
         reasoning_log = f"Cascade propagation from {cascade_from} elevates risk to {risk_score:.2f} at {hub_name}."
 
+    confidence = clamp(
+        0.94
+        - (0.28 if news_result.get("fallback") else 0.0)
+        - (0.30 if weather_result.get("fallback") else 0.0)
+        - (0.08 if cascade_degree > 0 else 0.0),
+        0.25,
+        0.98,
+    )
+    congestion_factor = round(clamp(0.75 + risk_score * 0.55 + (0.1 if cascade_degree > 0 else 0), 0.60, 1.70), 2)
+
     return HubRiskAnalysis(
         hubName=hub_name,
         lat=hub.lat,
         lon=hub.lon,
         riskScore=round(clamp(risk_score, 0.0, 1.0), 2),
         frictionCoefficient=round(clamp(friction, 0.0, 1.5), 2),
+        confidence=round(confidence, 2),
+        congestionFactor=congestion_factor,
+        isCascadeAffected=bool(cascade_degree > 0),
         reasoningLog=reasoning_log,
         status=risk_to_health(risk_score),
         newsSummary=news_result["summary"],
@@ -740,7 +757,12 @@ def route_transit_hours(route: List[str]) -> int:
     total = 0
     for i in range(len(route) - 1):
         bp = LEG_BLUEPRINTS.get(frozenset((route[i], route[i + 1])))
-        total += int((bp or {}).get("etaHours", 72))
+        if bp:
+            total += int(bp.get("etaHours", 72))
+            continue
+        edge = next((attrs for o, d, attrs in EDGE_BLUEPRINTS if frozenset((o, d)) == frozenset((route[i], route[i + 1]))), None)
+        distance_nm = edge["distance"] if edge else 4_000
+        total += int(distance_nm / OCEAN_SPEED_KT)
     return total
 
 
@@ -821,16 +843,24 @@ def run_shortest_path(start_node: str, end_node: str, graph: nx.Graph) -> Tuple[
 
 
 def build_risk_injections_from_analyses(current_route: List[str], analyses: List[HubRiskAnalysis]) -> List[RiskInjection]:
-    analysis_by_hub = {a.hub_name: a for a in analyses}
-    injections = []
-    for i in range(len(current_route) - 1):
-        o, d = current_route[i], current_route[i + 1]
-        candidates = [analysis_by_hub.get(o), analysis_by_hub.get(d)]
-        impactful = [c for c in candidates if c and c.risk_score >= 0.40]
-        if not impactful:
+    analysis_map = {a.hub_name: a for a in analyses if a.risk_score >= 0.40}
+    injections: List[RiskInjection] = []
+
+    for origin, destination, _ in EDGE_BLUEPRINTS:
+        origin_analysis = analysis_map.get(origin)
+        destination_analysis = analysis_map.get(destination)
+        if not origin_analysis and not destination_analysis:
             continue
-        dominant = max(impactful, key=lambda a: a.risk_score)
-        injections.append(RiskInjection(fromNode=o, toNode=d, riskScore=dominant.risk_score, weatherFriction=dominant.friction_coefficient, reason=dominant.reasoning_log))
+        dominant = max([analysis for analysis in [origin_analysis, destination_analysis] if analysis], key=lambda analysis: analysis.risk_score)
+        injections.append(
+            RiskInjection(
+                fromNode=origin,
+                toNode=destination,
+                riskScore=dominant.risk_score,
+                weatherFriction=dominant.friction_coefficient,
+                reason=dominant.reasoning_log,
+            )
+        )
     return injections
 
 

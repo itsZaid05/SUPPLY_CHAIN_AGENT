@@ -52,6 +52,9 @@ export interface HubRiskAnalysis {
   lon: number;
   riskScore: number;
   frictionCoefficient: number;
+  confidence: number;
+  congestionFactor: number;
+  isCascadeAffected: boolean;
   reasoningLog: string;
   status: HealthStatus;
   newsSummary: string;

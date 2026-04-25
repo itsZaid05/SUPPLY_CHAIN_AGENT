@@ -100,7 +100,11 @@ export function MapPanel({ currentRoute, shadowRoute, analyses, cascadeWarnings,
 
       // Clear previous layers
       for (const layer of layersRef.current) {
-        (layer as { remove: () => void }).remove();
+        try {
+          (layer as { remove: () => void }).remove();
+        } catch {
+          // ignore stale layer handles
+        }
       }
       layersRef.current = [];
 
@@ -199,6 +203,7 @@ export function MapPanel({ currentRoute, shadowRoute, analyses, cascadeWarnings,
             <div style="font-weight:700;font-size:14px;color:${color}">${hubName}</div>
             <div style="font-size:12px;margin-top:4px;color:#94a3b8">${analysis?.reasoningLog ?? "No analysis yet."}</div>
             ${analysis ? `<div style="margin-top:6px;font-size:11px;color:#64748b">Risk: <span style="color:${color};font-weight:600">${(risk * 100).toFixed(0)}%</span> · Status: <span style="color:${color}">${status.toUpperCase()}</span></div>` : ""}
+            ${analysis ? `<div style="margin-top:4px;font-size:11px;color:#64748b">Confidence: <span style="color:#a5b4fc">${(analysis.confidence * 100).toFixed(0)}%</span> · Congestion: <span style="color:#c4b5fd">${analysis.congestionFactor.toFixed(2)}x</span>${analysis.isCascadeAffected ? " · ⚡ Cascade-affected" : ""}</div>` : ""}
             ${cascadeNote}
           </div>
         `;
@@ -222,7 +227,11 @@ export function MapPanel({ currentRoute, shadowRoute, analyses, cascadeWarnings,
     return () => {
       isActive = false;
       for (const layer of layersRef.current) {
-        (layer as { remove: () => void }).remove();
+        try {
+          (layer as { remove: () => void }).remove();
+        } catch {
+          // ignore stale layer handles
+        }
       }
       layersRef.current = [];
       if (mapInstanceRef.current) {
