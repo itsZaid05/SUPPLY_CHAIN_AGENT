@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Bot, Globe, Map, Radar, Route, Zap } from "lucide-react";
+import { Activity, Bot, Globe, Map as MapIcon, Radar, Route, Zap } from "lucide-react";
 import { onSnapshot } from "firebase/firestore";
 
 import { analyzeRoute, explainReroute, getPrescriptivePath } from "@/lib/backend-client";
@@ -13,6 +13,7 @@ import {
   stableManifest,
 } from "@/lib/mock-data";
 import { getWorldStateDocumentReference, isFirebaseConfigured } from "@/lib/firebase";
+import { compareDisruptionScenarios, rankRoutes } from "@/lib/route-intelligence";
 import { ManifestPanel } from "@/components/manifest-panel";
 import { ShadowRoutePanel } from "@/components/shadow-route-panel";
 import { TerminalPanel } from "@/components/terminal-panel";
@@ -26,6 +27,8 @@ import type {
   ManifestLeg,
   PrescriptivePathResponse,
   RouteExplanation,
+  ScenarioComparison,
+  RankedRoute,
   ScenarioConfig,
   ShadowRoute,
   TerminalEntry,
@@ -82,6 +85,7 @@ const applyAnalysesToManifest = (base: ManifestLeg[], analyses: HubRiskAnalysis[
 type ActivePanel = "map" | "terminal";
 
 export function CommandCenter() {
+  const monitoringIntervalMs = 15_000;
   const [dashboardStatus, setDashboardStatus] = useState<DashboardStatus>("Normal");
   const [manifest, setManifest] = useState<ManifestLeg[]>(stableManifest);
   const [terminalLines, setTerminalLines] = useState<TerminalEntry[]>(initialTerminalEntries);
@@ -97,6 +101,14 @@ export function CommandCenter() {
   const [explanation, setExplanation] = useState<RouteExplanation | null>(null);
   const [isLoadingExplanation, setIsLoadingExplanation] = useState(false);
   const [activePanel, setActivePanel] = useState<ActivePanel>("map");
+  const [monitoringMode, setMonitoringMode] = useState(true);
+  const [lastScenario, setLastScenario] = useState<ScenarioConfig>({
+    origin: "Shanghai",
+    destination: "Rotterdam",
+    cargoType: "electronics",
+    priority: "speed",
+    containerCount: 200,
+  });
 
   const processedEventIds = useRef<Set<string>>(new Set());
   const activeRunId = useRef<string | null>(null);
@@ -174,6 +186,7 @@ export function CommandCenter() {
     scenario: ScenarioConfig;
   }) => {
     const { chaosHubs, severity, scenario } = params;
+    setLastScenario(scenario);
 
     // Reset state
     processedEventIds.current = new Set();
@@ -254,15 +267,23 @@ export function CommandCenter() {
   // ─── Approve reroute ─────────────────────────────────────────────────────
   const handleApproveReroute = useCallback(() => {
     if (!shadowRoute) return;
+    const previousRoute = activeRouteNodes.join(" → ");
+    const approvedRoute = shadowRoute.nodes.join(" → ");
     const approved: ShadowRoute = { ...shadowRoute, status: "executed" };
     setDashboardStatus("Rerouted");
     setShadowRoute(approved);
     setManifest(approved.legs.map((leg, i) => ({ ...leg, sequence: i + 1 })));
+    setActiveRouteNodes(approved.nodes);
+    setShadowRouteNodes(null);
+    setIsAlternateVisible(false);
+    setCompromisedHubs([]);
+    setCascadeWarnings([]);
     setTerminalQueue((c) => [
       ...c,
+      createEntry(`State transition: ACTIVE_ROUTE_SWITCHED (${previousRoute} → ${approvedRoute}).`, "dispatch", "success"),
       createEntry("Reroute approved. Updated manifest dispatched to all partners and control towers.", "dispatch", "success"),
     ]);
-  }, [shadowRoute]);
+  }, [activeRouteNodes, shadowRoute]);
 
   // ─── AI Explanation ──────────────────────────────────────────────────────
   const handleRequestExplanation = useCallback(async () => {
@@ -291,6 +312,33 @@ export function CommandCenter() {
     }
   }, [shadowRoute, shadowRouteNodes, activeRouteNodes, compromisedHubs, cascadeWarnings, isLoadingExplanation]);
 
+  // ─── Continuous monitoring ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!monitoringMode || dashboardStatus === "Analyzing") return;
+    const timer = setInterval(async () => {
+      try {
+        const analyzeReq = defaultAnalyzeRouteRequest([], 0, lastScenario);
+        analyzeReq.currentRoute = activeRouteNodes;
+        analyzeReq.hubs = activeRouteNodes;
+
+        const analyzeRes = await analyzeRoute(analyzeReq);
+        setHubAnalyses(analyzeRes.analyses);
+        setCompromisedHubs(analyzeRes.compromisedHubs);
+        setCascadeWarnings(analyzeRes.cascadeWarnings ?? []);
+        setManifest((currentManifest) => applyAnalysesToManifest(currentManifest, analyzeRes.analyses));
+        setTerminalQueue((c) => [
+          ...c,
+          createEntry(`Monitoring tick complete · ${analyzeRes.analyses.length} hubs re-evaluated.`, "system", "info"),
+        ]);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Monitoring refresh failed.";
+        setTerminalQueue((c) => [...c, createEntry(`Monitoring degraded: ${message}`, "system", "warning")]);
+      }
+    }, monitoringIntervalMs);
+
+    return () => clearInterval(timer);
+  }, [activeRouteNodes, dashboardStatus, lastScenario, monitoringIntervalMs, monitoringMode]);
+
   // ─── Derived state ───────────────────────────────────────────────────────
   const currentTransitHours = useMemo(
     () => shadowRoute?.comparison.currentTransitHours ?? stableManifest.reduce((s, l) => s + l.etaHours, 0),
@@ -299,6 +347,20 @@ export function CommandCenter() {
   const criticalCount = manifest.filter((l) => l.health === "critical").length;
   const avgRisk = (manifest.reduce((s, l) => s + l.riskScore, 0) / manifest.length).toFixed(2);
   const isStreaming = terminalQueue.length > 0 || isLoadingAlternate;
+  const rankedRoutes: RankedRoute[] = useMemo(
+    () => rankRoutes(activeRouteNodes, shadowRouteNodes, hubAnalyses),
+    [activeRouteNodes, shadowRouteNodes, hubAnalyses],
+  );
+  const scenarioComparisons: ScenarioComparison[] = useMemo(
+    () => compareDisruptionScenarios(activeRouteNodes, shadowRouteNodes),
+    [activeRouteNodes, shadowRouteNodes],
+  );
+  const currentResilienceScore = rankedRoutes.find((route) => route.nodes.join("→") === activeRouteNodes.join("→"))?.resilienceScore
+    ?? rankedRoutes[0]?.resilienceScore
+    ?? 62;
+  const shadowResilienceScore = rankedRoutes.find((route) => route.nodes.join("→") === (shadowRouteNodes ?? []).join("→"))?.resilienceScore
+    ?? rankedRoutes[1]?.resilienceScore
+    ?? currentResilienceScore;
 
   return (
     <main className="h-screen overflow-hidden bg-slate-950 px-3 py-3 sm:px-4 lg:px-6">
@@ -327,7 +389,8 @@ export function CommandCenter() {
             </div>
 
             {/* KPI strip */}
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="flex flex-col gap-2 xl:items-end">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {[
                 {
                   icon: Activity,
@@ -338,7 +401,7 @@ export function CommandCenter() {
                 },
                 {
                   icon: Bot,
-                  label: "AI Engine",
+                  label: "Decision Engine",
                   value: isStreaming ? "Processing" : "Monitoring",
                   sub: `Network risk ${avgRisk}`,
                   color: isStreaming ? "text-amber-300" : "text-slate-200",
@@ -367,6 +430,17 @@ export function CommandCenter() {
                   <p className="mt-0.5 text-[10px] text-slate-600 truncate">{sub}</p>
                 </div>
               ))}
+              </div>
+              <button
+                onClick={() => setMonitoringMode((value) => !value)}
+                className={`rounded-xl border px-3 py-2 text-xs font-semibold transition ${
+                  monitoringMode
+                    ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-200"
+                    : "border-white/10 bg-slate-950/50 text-slate-400"
+                }`}
+              >
+                {monitoringMode ? "Monitoring Mode: ON" : "Monitoring Mode: OFF"}
+              </button>
             </div>
           </div>
         </header>
@@ -397,7 +471,7 @@ export function CommandCenter() {
             {/* Tab bar */}
             <div className="flex items-center gap-0 border-b border-white/6 bg-slate-950/80 px-1 py-1">
               {([ 
-                { id: "map" as const, label: "Live Route Map", icon: Map },
+                { id: "map" as const, label: "Live Route Map", icon: MapIcon },
                 { id: "terminal" as const, label: "Intelligence Feed", icon: Bot },
               ]).map(({ id, label, icon: Icon }) => (
                 <button
@@ -456,6 +530,10 @@ export function CommandCenter() {
               cascadeWarnings={cascadeWarnings}
               explanation={explanation}
               isLoadingExplanation={isLoadingExplanation}
+              rankedRoutes={rankedRoutes}
+              scenarioComparisons={scenarioComparisons}
+              currentResilienceScore={currentResilienceScore}
+              shadowResilienceScore={shadowResilienceScore}
               onApproveReroute={handleApproveReroute}
               onRequestExplanation={handleRequestExplanation}
             />

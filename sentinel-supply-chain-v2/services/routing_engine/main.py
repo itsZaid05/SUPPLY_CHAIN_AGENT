@@ -163,6 +163,7 @@ class AnalyzeRouteResponse(CamelModel):
 class OptimizeRequest(CamelModel):
     start_node: str = Field(alias="startNode")
     end_node: str = Field(alias="endNode")
+    current_route: Optional[List[str]] = Field(default=None, alias="currentRoute")
     fuel_cost: float = Field(default=0.82, alias="fuelCost")
     delay_penalty: float = Field(default=14_000, alias="delayPenalty")
     carbon_cost: float = Field(default=5_000, alias="carbonCost")
@@ -1034,8 +1035,21 @@ async def explain_reroute(request: ExplainRerouteRequest) -> ExplainRerouteRespo
 def optimize(request: OptimizeRequest) -> OptimizeResponse:
     graph = build_graph(request.risk_injections, request.fuel_cost, request.delay_penalty, request.carbon_cost)
     path, total_weight = run_shortest_path(request.start_node, request.end_node, graph)
-    current_segments = build_segments_for_path(graph, [request.start_node, request.end_node] if len(path) == 1 else path)
-    optimized_segments = current_segments
-    comparison = calculate_comparison([request.start_node, request.end_node], current_segments, optimized_segments, request.delay_penalty, request.carbon_cost)
+
+    baseline_route = request.current_route if request.current_route and len(request.current_route) >= 2 else path
+    try:
+        current_segments = build_segments_for_path(graph, baseline_route)
+    except ValueError:
+        baseline_route = path
+        current_segments = build_segments_for_path(graph, path)
+
+    optimized_segments = build_segments_for_path(graph, path)
+    comparison = calculate_comparison(
+        baseline_route,
+        current_segments,
+        optimized_segments,
+        request.delay_penalty,
+        request.carbon_cost,
+    )
     shadow_route = build_shadow_route_from_path(path, total_weight, comparison)
     return OptimizeResponse(path=path, totalWeight=round(total_weight, 2), segments=optimized_segments, shadowRoute=shadow_route)

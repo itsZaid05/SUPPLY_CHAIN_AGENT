@@ -18,7 +18,9 @@ import {
 import type {
   CascadeWarning,
   DashboardStatus,
+  RankedRoute,
   RouteExplanation,
+  ScenarioComparison,
   ShadowRoute,
 } from "@/types/logistics";
 
@@ -75,6 +77,10 @@ interface ShadowRoutePanelProps {
   cascadeWarnings: CascadeWarning[];
   explanation: RouteExplanation | null;
   isLoadingExplanation: boolean;
+  rankedRoutes: RankedRoute[];
+  scenarioComparisons: ScenarioComparison[];
+  currentResilienceScore: number;
+  shadowResilienceScore: number;
   onApproveReroute: () => void;
   onRequestExplanation: () => void;
 }
@@ -89,6 +95,10 @@ export function ShadowRoutePanel({
   cascadeWarnings,
   explanation,
   isLoadingExplanation,
+  rankedRoutes,
+  scenarioComparisons,
+  currentResilienceScore,
+  shadowResilienceScore,
   onApproveReroute,
   onRequestExplanation,
 }: ShadowRoutePanelProps) {
@@ -113,7 +123,7 @@ export function ShadowRoutePanel({
           </span>
           <h2 className="text-base font-semibold text-slate-50">Shadow Route</h2>
           <p className="text-xs text-slate-500">
-            AI-prescribed corridor activated after live hub analysis.
+            Prescriptive decision corridor activated after live hub analysis.
           </p>
         </div>
 
@@ -184,6 +194,53 @@ export function ShadowRoutePanel({
           </div>
         )}
 
+        {/* Resilience scorecards */}
+        {(shadowRoute || rankedRoutes.length > 0) && (
+          <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3">
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-cyan-300/80">
+              Resilience Score
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <div className="rounded-lg border border-white/10 bg-slate-900/50 p-2">
+                <div className="text-[10px] text-slate-500">Current route</div>
+                <div className="text-lg font-bold text-slate-200">{currentResilienceScore}</div>
+              </div>
+              <div className="rounded-lg border border-emerald-400/20 bg-emerald-500/8 p-2">
+                <div className="text-[10px] text-emerald-300/80">Shadow route</div>
+                <div className="text-lg font-bold text-emerald-300">{shadowResilienceScore}</div>
+              </div>
+            </div>
+            <p className="mt-2 text-[10px] text-cyan-200/70">
+              Blend of disruption risk, delay variance, and fallback corridor coverage.
+            </p>
+          </div>
+        )}
+
+        {/* Top-3 route ranking */}
+        {rankedRoutes.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+              Top Route Rankings
+            </div>
+            {rankedRoutes.slice(0, 3).map((route) => (
+              <div key={route.id} className="rounded-xl border border-white/10 bg-slate-900/45 p-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-violet-300">{route.rankLabel}</span>
+                  <span className="text-[10px] text-slate-500">Resilience {route.resilienceScore}</span>
+                </div>
+                <div className="mt-1 truncate text-xs text-slate-200">{route.nodes.join(" → ")}</div>
+                <div className="mt-1 grid grid-cols-4 gap-1 text-[10px] text-slate-400">
+                  <span>Risk {(route.riskScore * 100).toFixed(0)}%</span>
+                  <span>ETA {route.etaHours}h</span>
+                  <span>Cost {currency.format(route.costUsd)}</span>
+                  <span>Carbon {route.carbonIndex}</span>
+                </div>
+                <p className="mt-1 text-[10px] text-slate-500">{route.selectionRationale}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Route comparison */}
         {shadowRoute && (
           <div className="space-y-2">
@@ -213,6 +270,34 @@ export function ShadowRoutePanel({
                 {isApproved ? "Active" : "Ready"}
               </span>
             </div>
+          </div>
+        )}
+
+        {/* Scenario comparison mode */}
+        {scenarioComparisons.length > 0 && (
+          <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/6 p-3 space-y-2">
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-indigo-300/80">
+              Scenario Comparison Mode
+            </div>
+            {scenarioComparisons.map((scenario) => (
+              <div key={scenario.id} className="rounded-lg border border-white/10 bg-slate-950/45 p-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-medium text-slate-200">{scenario.title}</div>
+                  <div className="text-[10px] text-slate-500">{scenario.disruptedHubs.join(", ")}</div>
+                </div>
+                <div className="mt-1 grid grid-cols-2 gap-2 text-[10px]">
+                  <div className="rounded bg-red-500/10 px-2 py-1 text-red-200">
+                    Current: +{scenario.currentDelayHours}h · +{currency.format(scenario.currentCostDeltaUsd)}
+                  </div>
+                  <div className="rounded bg-emerald-500/10 px-2 py-1 text-emerald-200">
+                    Alternate: +{scenario.alternateDelayHours}h · +{currency.format(scenario.alternateCostDeltaUsd)}
+                  </div>
+                </div>
+                <div className="mt-1 text-[10px] text-slate-500">
+                  Affected hubs — Current: {scenario.affectedCurrentHubs.join(", ") || "none"} · Alternate: {scenario.affectedAlternateHubs.join(", ") || "none"}
+                </div>
+              </div>
+            ))}
           </div>
         )}
 

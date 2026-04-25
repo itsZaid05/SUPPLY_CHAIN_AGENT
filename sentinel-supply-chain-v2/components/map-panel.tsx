@@ -174,7 +174,8 @@ export function MapPanel({ currentRoute, shadowRoute, analyses, cascadeWarnings,
           weight: 2,
           fillColor: color,
           fillOpacity: isCompromised ? 0.95 : 0.80,
-        }).addTo(map);
+        });
+        marker.addTo(map);
 
         const cascadeNote = cascade
           ? `<div style="color:#f59e0b;font-size:11px;margin-top:6px">⚡ Cascade degree ${cascade.degree} from ${cascade.originDisruption}<br>Propagated risk: ${(cascade.propagatedRisk * 100).toFixed(0)}%</div>`
