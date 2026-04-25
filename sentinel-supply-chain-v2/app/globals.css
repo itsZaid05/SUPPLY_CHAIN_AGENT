@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+:root {
+  --accent-300: #a5b4fc;
+  --accent-500: #6366f1;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  background-color: #020817;
+  color: #f1f5f9;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+
+/* War-room panel */
+.war-panel {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1.5rem;
+  border: 1px solid rgba(255,255,255,0.06);
+  background: linear-gradient(135deg, rgba(15,23,42,0.85) 0%, rgba(2,8,23,0.92) 100%);
+  backdrop-filter: blur(12px);
+}
+.war-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 20% 0%, rgba(139,92,246,0.04) 0%, transparent 60%),
+              radial-gradient(ellipse at 80% 100%, rgba(6,182,212,0.03) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+/* Status chip */
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.04);
+  padding: 0.25rem 0.75rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+/* Leaflet override */
+.leaflet-container {
+  background: #0f172a !important;
+}
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+.leaflet-popup-content {
+  margin: 0 !important;
+}
+.leaflet-control-zoom {
+  border: 1px solid rgba(255,255,255,0.1) !important;
+  background: rgba(15,23,42,0.8) !important;
+}
+.leaflet-control-zoom a {
+  background: transparent !important;
+  color: #94a3b8 !important;
+  border-bottom: 1px solid rgba(255,255,255,0.1) !important;
+}
+.leaflet-control-zoom a:hover {
+  background: rgba(255,255,255,0.08) !important;
+  color: #f1f5f9 !important;
+}

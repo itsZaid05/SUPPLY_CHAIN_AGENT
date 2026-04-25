@@ -1,0 +1,13 @@
+.next
+node_modules
+.npm-cache
+out
+dist
+coverage
+.vercel
+.DS_Store
+*.log
+__pycache__
+*.pyc
+.env
+.env.local
