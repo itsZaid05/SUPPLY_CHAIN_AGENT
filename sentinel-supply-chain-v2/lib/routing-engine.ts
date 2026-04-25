@@ -156,9 +156,17 @@ export const optimizeRoute = (req: OptimizeRouteRequest): OptimizeRouteResponse 
   const { path, totalWeight } = dijkstra(weighted, req.startNode, req.endNode);
   const shadowSegs = buildSegments(path, weighted);
 
-  // Build current route segments for comparison (startNode → endNode direct or via default hops)
-  const currentPath = [req.startNode, req.endNode];
-  const currentSegs = shadowSegs; // fallback: compare shadow to itself when no current route provided
+  const fallbackCurrentPath = [req.startNode, req.endNode];
+  const requestedCurrentPath = req.currentRoute && req.currentRoute.length >= 2 ? req.currentRoute : fallbackCurrentPath;
+  const hasExplicitCurrentRoute = Boolean(req.currentRoute && req.currentRoute.length >= 2);
+  const currentPath = hasExplicitCurrentRoute ? requestedCurrentPath : path;
+  const currentSegs = (() => {
+    try {
+      return buildSegments(requestedCurrentPath, weighted);
+    } catch {
+      return buildSegments(path, weighted);
+    }
+  })();
 
   const comparison = buildComparison(currentPath, path, currentSegs, shadowSegs, req);
   return { path, totalWeight: +totalWeight.toFixed(2), segments: shadowSegs, shadowRoute: buildShadowRoute(path, totalWeight, comparison) };
