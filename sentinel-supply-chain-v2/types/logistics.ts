@@ -79,6 +79,30 @@ export interface RouteExplanation {
   alternativesConsidered: string[];
 }
 
+export interface RankedRoute {
+  id: string;
+  rankLabel: "Best Route" | "Second Best" | "Safest Route";
+  nodes: string[];
+  etaHours: number;
+  costUsd: number;
+  riskScore: number;
+  carbonIndex: number;
+  resilienceScore: number;
+  selectionRationale: string;
+}
+
+export interface ScenarioComparison {
+  id: string;
+  title: string;
+  disruptedHubs: string[];
+  currentDelayHours: number;
+  alternateDelayHours: number;
+  currentCostDeltaUsd: number;
+  alternateCostDeltaUsd: number;
+  affectedCurrentHubs: string[];
+  affectedAlternateHubs: string[];
+}
+
 export interface ChaosConfig {
   chaosHubs: string[];
   severity: number;
@@ -124,6 +148,7 @@ export interface RiskInjection {
 export interface OptimizeRouteRequest {
   startNode: string;
   endNode: string;
+  currentRoute?: string[];
   fuelCost: number;
   delayPenalty: number;
   carbonCost: number;
