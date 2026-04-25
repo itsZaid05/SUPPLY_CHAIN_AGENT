@@ -12,6 +12,9 @@ interface MapPanelProps {
   isLoading: boolean;
 }
 
+const LEAFLET_LOADED = { css: false, js: false };
+let leafletLoader: Promise<void> | null = null;
+
 const HUB_COORDS: Record<string, [number, number]> = {
   Shanghai: [31.2304, 121.4737],
   Singapore: [1.2644, 103.82],
@@ -41,24 +44,34 @@ export function MapPanel({ currentRoute, shadowRoute, analyses, cascadeWarnings,
 
   useEffect(() => {
     if (typeof window === "undefined" || !mapRef.current) return;
+    let isActive = true;
 
     // Dynamically load Leaflet
     const loadLeaflet = async () => {
       if (!(window as unknown as Record<string, unknown>).L) {
-        // Load CSS
-        const link = document.createElement("link");
-        link.rel = "stylesheet";
-        link.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
-        document.head.appendChild(link);
-
-        // Load JS
-        await new Promise<void>((resolve) => {
-          const script = document.createElement("script");
-          script.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
-          script.onload = () => resolve();
-          document.head.appendChild(script);
-        });
+        if (!LEAFLET_LOADED.css) {
+          LEAFLET_LOADED.css = true;
+          const link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+          document.head.appendChild(link);
+        }
+        if (!leafletLoader) {
+          leafletLoader = new Promise<void>((resolve) => {
+            if (LEAFLET_LOADED.js) {
+              resolve();
+              return;
+            }
+            LEAFLET_LOADED.js = true;
+            const script = document.createElement("script");
+            script.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+            script.onload = () => resolve();
+            document.head.appendChild(script);
+          });
+        }
+        await leafletLoader;
       }
+      if (!isActive) return;
 
       const L = (window as unknown as Record<string, unknown>).L as {
         map: (el: HTMLElement, opts: unknown) => unknown;
@@ -174,7 +187,8 @@ export function MapPanel({ currentRoute, shadowRoute, analyses, cascadeWarnings,
           weight: 2,
           fillColor: color,
           fillOpacity: isCompromised ? 0.95 : 0.80,
-        }).addTo(map);
+        });
+        marker.addTo(map);
 
         const cascadeNote = cascade
           ? `<div style="color:#f59e0b;font-size:11px;margin-top:6px">⚡ Cascade degree ${cascade.degree} from ${cascade.originDisruption}<br>Propagated risk: ${(cascade.propagatedRisk * 100).toFixed(0)}%</div>`
@@ -204,6 +218,18 @@ export function MapPanel({ currentRoute, shadowRoute, analyses, cascadeWarnings,
     };
 
     loadLeaflet();
+
+    return () => {
+      isActive = false;
+      for (const layer of layersRef.current) {
+        (layer as { remove: () => void }).remove();
+      }
+      layersRef.current = [];
+      if (mapInstanceRef.current) {
+        (mapInstanceRef.current as { remove: () => void }).remove();
+        mapInstanceRef.current = null;
+      }
+    };
   }, [currentRoute, shadowRoute, analyses, cascadeWarnings, compromisedHubs]);
 
   return (
