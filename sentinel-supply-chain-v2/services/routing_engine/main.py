@@ -1059,7 +1059,6 @@ async def explain_reroute(request: ExplainRerouteRequest) -> ExplainRerouteRespo
     )
     return ExplainRerouteResponse(explanation=explanation)
 
-
 @app.post("/optimize", response_model=OptimizeResponse)
 def optimize(request: OptimizeRequest) -> OptimizeResponse:
     graph = build_graph(request.risk_injections, request.fuel_cost, request.delay_penalty, request.carbon_cost)
@@ -1073,6 +1072,8 @@ def optimize(request: OptimizeRequest) -> OptimizeResponse:
         current_segments = build_segments_for_path(graph, path)
 
     optimized_segments = build_segments_for_path(graph, path)
+
+    # ✅ FIXED: removed merge conflict + kept correct arguments
     comparison = calculate_comparison(
         baseline_route,
         current_segments,
@@ -1082,5 +1083,12 @@ def optimize(request: OptimizeRequest) -> OptimizeResponse:
         request.cargo_type,
         request.container_count,
     )
+
     shadow_route = build_shadow_route_from_path(path, total_weight, comparison)
-    return OptimizeResponse(path=path, totalWeight=round(total_weight, 2), segments=optimized_segments, shadowRoute=shadow_route)
+
+    return OptimizeResponse(
+        path=path,
+        totalWeight=round(total_weight, 2),
+        segments=optimized_segments,
+        shadowRoute=shadow_route,
+    )

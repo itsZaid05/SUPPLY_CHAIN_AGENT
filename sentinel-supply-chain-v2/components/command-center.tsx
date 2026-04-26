@@ -85,8 +85,10 @@ const applyAnalysesToManifest = (base: ManifestLeg[], analyses: HubRiskAnalysis[
 type ActivePanel = "map" | "terminal";
 
 export function CommandCenter() {
+  // ✅ RESOLVED: use codex values — 60s interval + quota cap (not 15s + no cap from main)
   const monitoringIntervalMs = 60_000;
   const maxMonitoringCalls = 3;
+
   const [dashboardStatus, setDashboardStatus] = useState<DashboardStatus>("Normal");
   const [manifest, setManifest] = useState<ManifestLeg[]>(stableManifest);
   const [terminalLines, setTerminalLines] = useState<TerminalEntry[]>(initialTerminalEntries);
@@ -102,8 +104,11 @@ export function CommandCenter() {
   const [explanation, setExplanation] = useState<RouteExplanation | null>(null);
   const [isLoadingExplanation, setIsLoadingExplanation] = useState(false);
   const [activePanel, setActivePanel] = useState<ActivePanel>("map");
+
+  // ✅ RESOLVED: use codex — OFF by default + call counter (not ON with no counter from main)
   const [monitoringMode, setMonitoringMode] = useState(false);
   const [monitoringCallCount, setMonitoringCallCount] = useState(0);
+
   const [lastScenario, setLastScenario] = useState<ScenarioConfig>({
     origin: "Shanghai",
     destination: "Rotterdam",
@@ -127,7 +132,6 @@ export function CommandCenter() {
 
   // ─── World state ingestion ───────────────────────────────────────────────
   const ingestWorldState = useCallback((ws: WorldStateDocument) => {
-    // New run → reset
     if (activeRunId.current !== ws.analysisRunId) {
       activeRunId.current = ws.analysisRunId;
       processedEventIds.current = new Set();
@@ -190,7 +194,6 @@ export function CommandCenter() {
     const { chaosHubs, severity, scenario } = params;
     setLastScenario(scenario);
 
-    // Reset state
     processedEventIds.current = new Set();
     activeRunId.current = null;
     setDashboardStatus("Analyzing");
@@ -212,7 +215,6 @@ export function CommandCenter() {
     ]);
 
     try {
-      // Step 1: Analyze hubs
       const analyzeReq = defaultAnalyzeRouteRequest(chaosHubs, severity, scenario);
       const analyzeRes = await analyzeRoute(analyzeReq);
 
@@ -237,7 +239,6 @@ export function CommandCenter() {
         setTerminalQueue((c) => [...c, createEntry(`Degraded data sources: ${analyzeRes.warnings[0]}`, "system", "warning")]);
       }
 
-      // Step 2: Get prescriptive path
       setTerminalQueue((c) => [...c, createEntry("Hub analysis complete. Computing optimal Dijkstra corridor…", "optimizer", "info")]);
 
       const prescriptiveReq = defaultPrescriptiveRouteRequest(analyzeRes.analyses, analyzeRes.analysisRunId, scenario);
@@ -315,6 +316,7 @@ export function CommandCenter() {
   }, [shadowRoute, shadowRouteNodes, activeRouteNodes, compromisedHubs, cascadeWarnings, isLoadingExplanation]);
 
   // ─── Continuous monitoring ───────────────────────────────────────────────
+  // ✅ RESOLVED: use codex — includes quota cap check (not the uncapped main version)
   useEffect(() => {
     if (!monitoringMode || dashboardStatus === "Analyzing") return;
     if (monitoringCallCount >= maxMonitoringCalls) {
@@ -345,6 +347,7 @@ export function CommandCenter() {
     }, monitoringIntervalMs);
 
     return () => clearInterval(timer);
+  // ✅ RESOLVED: use codex dependency array (includes monitoringCallCount + maxMonitoringCalls)
   }, [activeRouteNodes, dashboardStatus, lastScenario, maxMonitoringCalls, monitoringCallCount, monitoringIntervalMs, monitoringMode]);
 
   // ─── Derived state ───────────────────────────────────────────────────────
@@ -359,10 +362,13 @@ export function CommandCenter() {
     () => rankRoutes(activeRouteNodes, shadowRouteNodes, hubAnalyses),
     [activeRouteNodes, shadowRouteNodes, hubAnalyses],
   );
+
+  // ✅ RESOLVED: use codex — passes hubAnalyses + cargo multiplier (not the bare call from main)
   const scenarioComparisons: ScenarioComparison[] = useMemo(
     () => compareDisruptionScenarios(activeRouteNodes, shadowRouteNodes, hubAnalyses, 14_000, lastScenario.containerCount >= 250 ? 1.4 : 1.0),
     [activeRouteNodes, shadowRouteNodes, hubAnalyses, lastScenario.containerCount],
   );
+
   const currentResilienceScore = rankedRoutes.find((route) => route.nodes.join("→") === activeRouteNodes.join("→"))?.resilienceScore
     ?? rankedRoutes[0]?.resilienceScore
     ?? 62;
@@ -439,6 +445,7 @@ export function CommandCenter() {
                 </div>
               ))}
               </div>
+              {/* ✅ RESOLVED: shows call count from codex (not bare ON/OFF from main) */}
               <button
                 onClick={() => setMonitoringMode((value) => !value)}
                 className={`rounded-xl border px-3 py-2 text-xs font-semibold transition ${
@@ -447,17 +454,15 @@ export function CommandCenter() {
                     : "border-white/10 bg-slate-950/50 text-slate-400"
                 }`}
               >
-                {monitoringMode ? `Monitoring Mode: ON (${Math.min(monitoringCallCount, maxMonitoringCalls)}/${maxMonitoringCalls})` : "Monitoring Mode: OFF"}
+                {monitoringMode
+                  ? `Monitoring Mode: ON (${Math.min(monitoringCallCount, maxMonitoringCalls)}/${maxMonitoringCalls})`
+                  : "Monitoring Mode: OFF"}
               </button>
             </div>
           </div>
         </header>
 
         {/* ── Main grid ──────────────────────────────────────────────────── */}
-        {/*
-          Layout: [Chaos Panel | Center Panel (Map/Terminal toggle) | Shadow Route Panel]
-                  Fixed left chaos + right shadow, center switches between map & terminal
-        */}
         <div className="grid min-h-0 gap-3 xl:grid-cols-[260px_minmax(0,1fr)_300px]">
 
           {/* LEFT: Chaos engine + manifest */}
@@ -476,9 +481,8 @@ export function CommandCenter() {
 
           {/* CENTER: Map / Terminal toggle */}
           <div className="flex min-h-0 flex-col gap-0 overflow-hidden rounded-3xl border border-white/6 bg-slate-950/60">
-            {/* Tab bar */}
             <div className="flex items-center gap-0 border-b border-white/6 bg-slate-950/80 px-1 py-1">
-              {([ 
+              {([
                 { id: "map" as const, label: "Live Route Map", icon: MapIcon },
                 { id: "terminal" as const, label: "Intelligence Feed", icon: Bot },
               ]).map(({ id, label, icon: Icon }) => (
@@ -505,7 +509,6 @@ export function CommandCenter() {
               ))}
             </div>
 
-            {/* Panel body */}
             <div className="min-h-0 flex-1">
               {activePanel === "map" ? (
                 <MapPanel
