@@ -12,10 +12,9 @@ from models.logistics import (
 )
 from utils.mock_data import (
     get_hub_coordinates,
-    MOCK_NEWS_EVENTS,
-    MOCK_WEATHER_FRICTION,
     get_all_hub_names,
 )
+from services.live_data import fetch_hub_context
 from services.gemini_reasoner import GeminiReasoner
 
 logger = logging.getLogger(__name__)
@@ -50,13 +49,22 @@ class RouteAnalyzer:
                 continue
 
             try:
-                # Get Gemini analysis
+                # Fetch live news + weather context (falls back gracefully if APIs unavailable)
+                hub_context = await fetch_hub_context(hub_name)
+
+                if not hub_context["news_is_live"] or not hub_context["weather_is_live"]:
+                    data_source = "live" if hub_context["news_is_live"] and hub_context["weather_is_live"] else "partial-fallback"
+                    warnings.append(f"{hub_name}: data source={data_source}")
+
+                # Get Gemini analysis with live-fetched context
                 analysis = await self.gemini.evaluate_hub_risk(
                     hub_name=hub_name,
                     chaos_severity=request.chaos_severity if hub_name in request.chaos_hubs else 0.0,
-                    news_context=MOCK_NEWS_EVENTS.get(hub_name, "No recent events"),
-                    weather_friction=MOCK_WEATHER_FRICTION.get(hub_name, 1.0),
+                    news_context=hub_context["news_context"],
+                    weather_friction=hub_context["weather_friction"],
                 )
+                # Attach live weather summary directly to the analysis
+                analysis.weather_summary = hub_context["weather_summary"]
 
                 # Track compromised hubs
                 if analysis.risk_score > 0.5:
