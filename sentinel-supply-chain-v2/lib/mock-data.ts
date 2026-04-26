@@ -65,7 +65,7 @@ export const stableManifest: ManifestLeg[] = [
 
 export const initialTerminalEntries: TerminalEntry[] = [
   { id: "terminal-boot", source: "system", tone: "success", message: "Sentinel v2.0 · Global Supply Chain Intelligence Platform online.", timestamp: createTimestamp(-2) },
-  { id: "terminal-net", source: "signal", tone: "info", message: "NetworkX graph initialized with 9 hubs · 14 weighted edges · Dijkstra routing armed.", timestamp: createTimestamp(-1) },
+  { id: "terminal-net", source: "signal", tone: "info", message: `NetworkX graph initialized with ${ALL_HUBS.length} hubs · live risk graph armed.`, timestamp: createTimestamp(-1) },
   { id: "terminal-ready", source: "optimizer", tone: "info", message: "System optimal. Select a scenario or inject chaos to begin analysis.", timestamp: createTimestamp(0) },
 ];
 

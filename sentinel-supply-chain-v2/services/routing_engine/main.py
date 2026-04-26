@@ -70,6 +70,9 @@ class HubRiskAnalysis(CamelModel):
     lon: float
     risk_score: float = Field(alias="riskScore")
     friction_coefficient: float = Field(alias="frictionCoefficient")
+    confidence: float
+    congestion_factor: float = Field(alias="congestionFactor")
+    is_cascade_affected: bool = Field(alias="isCascadeAffected")
     reasoning_log: str = Field(alias="reasoningLog")
     status: str
     news_summary: str = Field(alias="newsSummary")
@@ -167,6 +170,8 @@ class OptimizeRequest(CamelModel):
     fuel_cost: float = Field(default=0.82, alias="fuelCost")
     delay_penalty: float = Field(default=14_000, alias="delayPenalty")
     carbon_cost: float = Field(default=5_000, alias="carbonCost")
+    cargo_type: str = Field(default="bulk", alias="cargoType")
+    container_count: int = Field(default=1, alias="containerCount")
     risk_injections: List[RiskInjection] = Field(default_factory=list, alias="riskInjections")
 
 
@@ -259,19 +264,6 @@ EDGE_BLUEPRINTS = [
     ("Cape Town", "Hamburg", {"distance": 8_200, "risk_score": 0.14, "weather_friction": 0.24}),
 ]
 
-# Downstream graph — which hubs are "fed by" which
-DOWNSTREAM_GRAPH: Dict[str, List[str]] = {
-    "Suez": ["Rotterdam", "Hamburg"],
-    "Singapore": ["Suez", "Dubai", "Cape Town", "Colombo"],
-    "Dubai": ["Suez", "Rotterdam"],
-    "Cape Town": ["Rotterdam", "Hamburg"],
-    "Shanghai": ["Singapore", "Mumbai"],
-    "Mumbai": ["Dubai", "Colombo"],
-    "Colombo": ["Singapore"],
-    "Rotterdam": ["Hamburg"],
-    "Hamburg": [],
-}
-
 # Cargo type penalty multipliers
 CARGO_PENALTY_MULTIPLIERS: Dict[str, float] = {
     "electronics": 1.8,
@@ -300,6 +292,7 @@ LEG_BLUEPRINTS: Dict[frozenset, Dict[str, Any]] = {
 }
 
 DEFAULT_ROUTE = ["Shanghai", "Singapore", "Suez", "Rotterdam"]
+OCEAN_SPEED_KT = 18.5
 
 # ─── App ─────────────────────────────────────────────────────────────────────
 
@@ -459,6 +452,7 @@ async def fetch_hub_weather(lat: float, lon: float) -> Dict[str, Any]:
             "summary": "StormGlass unavailable. Baseline conditions assumed.",
             "windSpeed": 5.0,
             "precipitation": 1.0,
+            "waveHeight": 0.8,
             "errors": ["STORMGLASS_API_KEY is not configured."],
             "fallback": True,
         }
@@ -466,46 +460,49 @@ async def fetch_hub_weather(lat: float, lon: float) -> Dict[str, Any]:
         async with httpx.AsyncClient(timeout=20.0) as client:
             response = await client.get(
                 "https://api.stormglass.io/v2/weather/point",
-                params={"lat": lat, "lng": lon, "params": "windSpeed,precipitation", "source": "sg"},
+                params={"lat": lat, "lng": lon, "params": "windSpeed,precipitation,waveHeight", "source": "sg"},
                 headers={"Authorization": api_key},
             )
         if response.status_code == 429:
-            return {"raw": "[RATE-LIMITED] StormGlass.", "summary": "StormGlass rate limit.", "windSpeed": 5.0, "precipitation": 1.0, "errors": ["StormGlass rate limit."], "fallback": True}
+            return {"raw": "[RATE-LIMITED] StormGlass.", "summary": "StormGlass rate limit.", "windSpeed": 5.0, "precipitation": 1.0, "waveHeight": 0.8, "errors": ["StormGlass rate limit."], "fallback": True}
         response.raise_for_status()
         payload = response.json()
         hour = (payload.get("hours") or [{}])[0]
         wind = first_numeric(hour.get("windSpeed")) or 0.0
         precip = first_numeric(hour.get("precipitation")) or 0.0
-        summary = f"Wind {wind:.2f} m/s, precipitation {precip:.2f} mm/h at [{lat:.4f}, {lon:.4f}]."
-        return {"raw": summary, "summary": summary, "windSpeed": wind, "precipitation": precip, "errors": [], "fallback": False}
+        wave = first_numeric(hour.get("waveHeight")) or 0.0
+        summary = f"Wind {wind:.2f} m/s, precipitation {precip:.2f} mm/h, wave {wave:.2f} m at [{lat:.4f}, {lon:.4f}]."
+        return {"raw": summary, "summary": summary, "windSpeed": wind, "precipitation": precip, "waveHeight": wave, "errors": [], "fallback": False}
     except Exception as exc:
-        return {"raw": f"[ERROR] StormGlass failed: {exc}", "summary": "Weather fetch failed. Baseline model active.", "windSpeed": 5.0, "precipitation": 1.0, "errors": [str(exc)], "fallback": True}
+        return {"raw": f"[ERROR] StormGlass failed: {exc}", "summary": "Weather fetch failed. Baseline model active.", "windSpeed": 5.0, "precipitation": 1.0, "waveHeight": 0.8, "errors": [str(exc)], "fallback": True}
 
 
 def fallback_risk_model(news_data: str, weather_data: Dict[str, Any]) -> Dict[str, Any]:
     keyword_hits = len(re.findall(r"logistics|delay|strike|disruption|congestion|storm|wind|weather|queue|port|blockage|attack|sanction", news_data.lower()))
     wind = float(weather_data.get("windSpeed") or 0.0)
     precip = float(weather_data.get("precipitation") or 0.0)
+    wave = float(weather_data.get("waveHeight") or 0.0)
     wind_factor = clamp(wind / 20.0, 0.0, 1.0)
     precip_factor = clamp(precip / 8.0, 0.0, 1.0)
-    risk = clamp(0.12 + keyword_hits * 0.05 + wind_factor * 0.4 + precip_factor * 0.18, 0.05, 0.95)
-    friction = clamp(0.08 + wind_factor * 0.55 + precip_factor * 0.25, 0.05, 1.2)
-    reasoning = f"Heuristic model: {keyword_hits} disruption signals detected; wind {wind:.1f} m/s; precipitation {precip:.1f} mm/h."
+    wave_factor = clamp(wave / 6.0, 0.0, 1.0)
+    risk = clamp(0.12 + keyword_hits * 0.05 + wind_factor * 0.35 + precip_factor * 0.18 + wave_factor * 0.15, 0.05, 0.95)
+    friction = clamp(0.08 + wind_factor * 0.50 + precip_factor * 0.22 + wave_factor * 0.20, 0.05, 1.2)
+    reasoning = f"Heuristic model: {keyword_hits} disruption signals detected; wind {wind:.1f} m/s; precipitation {precip:.1f} mm/h; wave {wave:.1f} m."
     return {"risk_score": round(risk, 2), "friction_coefficient": round(friction, 2), "reasoning_log": reasoning}
 
 
-async def process_risk_with_gemini(news_data: str, weather_data: str) -> Dict[str, Any]:
+async def process_risk_with_gemini(news_data: str, weather_data: str, weather_structured: Dict[str, Any]) -> Dict[str, Any]:
     api_key = os.getenv("GEMINI_API_KEY")
     model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
     if not api_key:
-        return fallback_risk_model(news_data, {"windSpeed": 5.0, "precipitation": 1.0})
+        return fallback_risk_model(news_data, weather_structured)
     prompt = (
         "You are an expert logistics risk analyst at a global supply chain command center.\n"
         "Analyze the hub news and weather inputs below.\n"
         "Return ONLY a JSON object with exactly these keys:\n"
         '  "risk_score": number 0.0-1.0 (probability of significant operational disruption),\n'
         '  "friction_coefficient": number 0.0-1.5 (multiplicative delay/fuel penalty),\n'
-        '  "reasoning_log": single concise sentence (max 25 words) summarizing the dominant risk.\n\n'
+        '  "reasoning_log": single concise sentence (max 60 words) summarizing the dominant risk.\n\n'
         f"News:\n{news_data[:2000]}\n\nWeather:\n{weather_data[:500]}\n"
     )
     try:
@@ -529,7 +526,7 @@ async def process_risk_with_gemini(news_data: str, weather_data: str) -> Dict[st
         }
     except Exception as exc:
         logger.warning("Gemini failed, using fallback: %s", exc)
-        return fallback_risk_model(news_data, {"windSpeed": 5.0, "precipitation": 1.0})
+        return fallback_risk_model(news_data, weather_structured)
 
 
 async def generate_route_explanation(
@@ -607,15 +604,15 @@ def compute_cascade_warnings(
     disrupted_hubs: List[str],
     disruption_risks: Dict[str, float],
     all_hubs: List[str],
+    graph: nx.Graph,
 ) -> List[CascadeWarning]:
-    """First and second-order cascade propagation through the downstream graph."""
+    """First and second-order cascade propagation through the active graph topology."""
     warnings: List[CascadeWarning] = []
     propagated: Dict[str, float] = {}
 
     for hub in disrupted_hubs:
         base_risk = disruption_risks.get(hub, 0.88)
-        # First-order downstream
-        for downstream in DOWNSTREAM_GRAPH.get(hub, []):
+        for downstream in graph.neighbors(hub):
             if downstream in disrupted_hubs:
                 continue
             propagated_risk = round(base_risk * 0.45, 2)
@@ -629,12 +626,11 @@ def compute_cascade_warnings(
                     reason=f"First-order cascade from {hub} disruption (risk {base_risk:.2f}) propagates {propagated_risk:.2f} to {downstream}.",
                 ))
 
-    # Second-order
     for first_order_warning in [w for w in warnings if w.degree == 1]:
         second_risk = round(first_order_warning.propagated_risk * 0.35, 2)
         if second_risk < 0.12:
             continue
-        for downstream in DOWNSTREAM_GRAPH.get(first_order_warning.hub_name, []):
+        for downstream in graph.neighbors(first_order_warning.hub_name):
             if downstream in disrupted_hubs or any(w.hub_name == downstream and w.degree <= 1 for w in warnings):
                 continue
             if downstream not in propagated or propagated[downstream] < second_risk:
@@ -669,7 +665,7 @@ async def analyze_hub(
         fetch_hub_news(hub_name),
         fetch_hub_weather(hub.lat, hub.lon),
     )
-    gemini_result = await process_risk_with_gemini(news_result["raw"], weather_result["raw"])
+    gemini_result = await process_risk_with_gemini(news_result["raw"], weather_result["raw"], weather_result)
     source_errors = [*news_result.get("errors", []), *weather_result.get("errors", [])]
 
     risk_score = float(gemini_result["risk_score"])
@@ -687,12 +683,25 @@ async def analyze_hub(
         friction = max(friction, cascade_risk_override * 0.7)
         reasoning_log = f"Cascade propagation from {cascade_from} elevates risk to {risk_score:.2f} at {hub_name}."
 
+    confidence = clamp(
+        0.94
+        - (0.28 if news_result.get("fallback") else 0.0)
+        - (0.30 if weather_result.get("fallback") else 0.0)
+        - (0.08 if cascade_degree > 0 else 0.0),
+        0.25,
+        0.98,
+    )
+    congestion_factor = round(clamp(0.75 + risk_score * 0.55 + (0.1 if cascade_degree > 0 else 0), 0.60, 1.70), 2)
+
     return HubRiskAnalysis(
         hubName=hub_name,
         lat=hub.lat,
         lon=hub.lon,
         riskScore=round(clamp(risk_score, 0.0, 1.0), 2),
         frictionCoefficient=round(clamp(friction, 0.0, 1.5), 2),
+        confidence=round(confidence, 2),
+        congestionFactor=congestion_factor,
+        isCascadeAffected=bool(cascade_degree > 0),
         reasoningLog=reasoning_log,
         status=risk_to_health(risk_score),
         newsSummary=news_result["summary"],
@@ -750,7 +759,12 @@ def route_transit_hours(route: List[str]) -> int:
     total = 0
     for i in range(len(route) - 1):
         bp = LEG_BLUEPRINTS.get(frozenset((route[i], route[i + 1])))
-        total += int((bp or {}).get("etaHours", 72))
+        if bp:
+            total += int(bp.get("etaHours", 72))
+            continue
+        edge = next((attrs for o, d, attrs in EDGE_BLUEPRINTS if frozenset((o, d)) == frozenset((route[i], route[i + 1]))), None)
+        distance_nm = edge["distance"] if edge else 4_000
+        total += int(distance_nm / OCEAN_SPEED_KT)
     return total
 
 
@@ -776,8 +790,8 @@ def calculate_comparison(
     effective_penalty = delay_penalty * cargo_multiplier * max(1, container_count / 100)
 
     current_base_transit = route_transit_hours(current_route)
-    current_delay_hours = int(round(sum(seg.risk_score * 42 for seg in current_segments if seg.risk_score >= 0.45)))
-    prescribed_delay_hours = int(round(sum(seg.risk_score * 18 for seg in optimized_segments if seg.risk_score >= 0.45)))
+    current_delay_hours = int(round(sum(seg.risk_score * 42 for seg in current_segments if seg.risk_score >= 0.40)))
+    prescribed_delay_hours = int(round(sum(seg.risk_score * 18 for seg in optimized_segments if seg.risk_score >= 0.40)))
 
     current_transit_hours = current_base_transit + current_delay_hours
     opt_route = [optimized_segments[0].from_node, *[s.to_node for s in optimized_segments]]
@@ -795,7 +809,13 @@ def calculate_comparison(
 
     current_dist = route_distance_nm(current_route)
     prescribed_dist = route_distance_nm(opt_route)
-    roi = round(cost_avoided_usd / max(prescribed_penalty_usd, 1), 2) if prescribed_penalty_usd > 0 else round(cost_avoided_usd / max(effective_penalty * 0.01, 1), 2)
+    roi = 1.0
+    if cost_avoided_usd > 0:
+        roi = round(
+            (cost_avoided_usd + prescribed_penalty_usd) / max(prescribed_penalty_usd, cost_avoided_usd * 0.1, 1),
+            1,
+        )
+        roi = min(roi, 99.0)
 
     return ComparisonMatrix(
         currentDelayHours=current_delay_hours,
@@ -825,22 +845,30 @@ def run_shortest_path(start_node: str, end_node: str, graph: nx.Graph) -> Tuple[
 
 
 def build_risk_injections_from_analyses(current_route: List[str], analyses: List[HubRiskAnalysis]) -> List[RiskInjection]:
-    analysis_by_hub = {a.hub_name: a for a in analyses}
-    injections = []
-    for i in range(len(current_route) - 1):
-        o, d = current_route[i], current_route[i + 1]
-        candidates = [analysis_by_hub.get(o), analysis_by_hub.get(d)]
-        impactful = [c for c in candidates if c and c.risk_score >= 0.40]
-        if not impactful:
+    analysis_map = {a.hub_name: a for a in analyses if a.risk_score >= 0.40}
+    injections: List[RiskInjection] = []
+
+    for origin, destination, _ in EDGE_BLUEPRINTS:
+        origin_analysis = analysis_map.get(origin)
+        destination_analysis = analysis_map.get(destination)
+        if not origin_analysis and not destination_analysis:
             continue
-        dominant = max(impactful, key=lambda a: a.risk_score)
-        injections.append(RiskInjection(fromNode=o, toNode=d, riskScore=dominant.risk_score, weatherFriction=dominant.friction_coefficient, reason=dominant.reasoning_log))
+        dominant = max([analysis for analysis in [origin_analysis, destination_analysis] if analysis], key=lambda analysis: analysis.risk_score)
+        injections.append(
+            RiskInjection(
+                fromNode=origin,
+                toNode=destination,
+                riskScore=dominant.risk_score,
+                weatherFriction=dominant.friction_coefficient,
+                reason=dominant.reasoning_log,
+            )
+        )
     return injections
 
 
 def build_shadow_route_from_path(path: List[str], total_weight: float, comparison: ComparisonMatrix) -> ShadowRoute:
     legs = [build_leg(path[i], path[i + 1], i + 1) for i in range(len(path) - 1)]
-    return ShadowRoute(id="shadow-route-1", title="Sentinel Prescribed Corridor", status="available", nodes=path, legs=legs, totalWeight=round(total_weight, 2), comparison=comparison)
+    return ShadowRoute(id=f"shadow-{uuid.uuid4().hex[:12]}", title="Sentinel Prescribed Corridor", status="available", nodes=path, legs=legs, totalWeight=round(total_weight, 2), comparison=comparison)
 
 
 def build_initial_world_state(current_route: List[str], analysis_run_id: str) -> WorldStateDocument:
@@ -931,7 +959,8 @@ async def analyze_route(request: AnalyzeRouteRequest) -> AnalyzeRouteResponse:
     # Cascade propagation
     disrupted = [a.hub_name for a in analyses if a.status == "critical"]
     disruption_risks = {a.hub_name: a.risk_score for a in analyses if a.status == "critical"}
-    cascade_warnings = compute_cascade_warnings(disrupted, disruption_risks, hubs)
+    cascade_graph = build_graph([], fuel_cost=0.82, delay_penalty=request.chaos_severity * 14_000, carbon_cost=5_000)
+    cascade_warnings = compute_cascade_warnings(disrupted, disruption_risks, hubs, cascade_graph)
 
     if cascade_warnings:
         cascade_events = [
@@ -981,7 +1010,7 @@ async def get_prescriptive_path(request: PrescriptivePathRequest) -> Prescriptiv
     # Recompute cascade warnings from provided hub analyses
     disrupted = [a.hub_name for a in request.hub_analyses if a.status == "critical"]
     disruption_risks = {a.hub_name: a.risk_score for a in request.hub_analyses if a.status == "critical"}
-    cascade_warnings = compute_cascade_warnings(disrupted, disruption_risks, [a.hub_name for a in request.hub_analyses])
+    cascade_warnings = compute_cascade_warnings(disrupted, disruption_risks, [a.hub_name for a in request.hub_analyses], graph)
 
     warnings = list({w for a in request.hub_analyses for w in a.source_errors})
     world_state = WorldStateDocument(
@@ -1030,7 +1059,6 @@ async def explain_reroute(request: ExplainRerouteRequest) -> ExplainRerouteRespo
     )
     return ExplainRerouteResponse(explanation=explanation)
 
-
 @app.post("/optimize", response_model=OptimizeResponse)
 def optimize(request: OptimizeRequest) -> OptimizeResponse:
     graph = build_graph(request.risk_injections, request.fuel_cost, request.delay_penalty, request.carbon_cost)
@@ -1044,12 +1072,23 @@ def optimize(request: OptimizeRequest) -> OptimizeResponse:
         current_segments = build_segments_for_path(graph, path)
 
     optimized_segments = build_segments_for_path(graph, path)
+
+    # ✅ FIXED: removed merge conflict + kept correct arguments
     comparison = calculate_comparison(
         baseline_route,
         current_segments,
         optimized_segments,
         request.delay_penalty,
         request.carbon_cost,
+        request.cargo_type,
+        request.container_count,
     )
+
     shadow_route = build_shadow_route_from_path(path, total_weight, comparison)
-    return OptimizeResponse(path=path, totalWeight=round(total_weight, 2), segments=optimized_segments, shadowRoute=shadow_route)
+
+    return OptimizeResponse(
+        path=path,
+        totalWeight=round(total_weight, 2),
+        segments=optimized_segments,
+        shadowRoute=shadow_route,
+    )

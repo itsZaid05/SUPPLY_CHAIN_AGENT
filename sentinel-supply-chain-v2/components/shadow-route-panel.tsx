@@ -29,17 +29,20 @@ const currency = new Intl.NumberFormat("en-US", {
   currency: "USD",
   maximumFractionDigits: 0,
 });
+const counterMemory = new Map<string, number>();
 
 interface AnimatedCounterProps {
+  memoryKey: string;
   value: number;
   prefix?: string;
   suffix?: string;
   className?: string;
 }
 
-function AnimatedCounter({ value, prefix = "", suffix = "", className = "" }: AnimatedCounterProps) {
-  const [display, setDisplay] = useState(0);
-  const prevRef = useRef(0);
+function AnimatedCounter({ memoryKey, value, prefix = "", suffix = "", className = "" }: AnimatedCounterProps) {
+  const initial = counterMemory.get(memoryKey) ?? value;
+  const [display, setDisplay] = useState(initial);
+  const prevRef = useRef(initial);
 
   useEffect(() => {
     const start = prevRef.current;
@@ -54,11 +57,14 @@ function AnimatedCounter({ value, prefix = "", suffix = "", className = "" }: An
       const eased = 1 - Math.pow(1 - progress, 3);
       setDisplay(Math.round(start + diff * eased));
       if (progress < 1) requestAnimationFrame(tick);
-      else prevRef.current = end;
+      else {
+        prevRef.current = end;
+        counterMemory.set(memoryKey, end);
+      }
     };
 
     requestAnimationFrame(tick);
-  }, [value]);
+  }, [memoryKey, value]);
 
   return (
     <span className={className}>
@@ -159,6 +165,7 @@ export function ShadowRoutePanel({
             </div>
             <div className="flex items-baseline gap-1">
               <AnimatedCounter
+                memoryKey="shadow-cost-avoided"
                 value={costAvoided}
                 prefix="$"
                 className="text-3xl font-bold text-emerald-300 tabular-nums"
@@ -176,12 +183,12 @@ export function ShadowRoutePanel({
           <div className="grid grid-cols-3 gap-2">
             <div className="rounded-xl border border-white/8 bg-slate-900/50 p-2.5 text-center">
               <Clock className="mx-auto h-4 w-4 text-violet-400 mb-1" />
-              <AnimatedCounter value={timeSaved} suffix="h" className="text-lg font-bold text-violet-300 block" />
+              <AnimatedCounter memoryKey="shadow-time-saved" value={timeSaved} suffix="h" className="text-lg font-bold text-violet-300 block" />
               <div className="text-[10px] text-slate-500">Saved</div>
             </div>
             <div className="rounded-xl border border-white/8 bg-slate-900/50 p-2.5 text-center">
               <DollarSign className="mx-auto h-4 w-4 text-amber-400 mb-1" />
-              <AnimatedCounter value={comparison?.currentPenaltyUsd ?? 0} prefix="$" className="text-lg font-bold text-amber-300 block" />
+              <AnimatedCounter memoryKey="shadow-current-penalty" value={comparison?.currentPenaltyUsd ?? 0} prefix="$" className="text-lg font-bold text-amber-300 block" />
               <div className="text-[10px] text-slate-500">Old risk</div>
             </div>
             <div className="rounded-xl border border-white/8 bg-slate-900/50 p-2.5 text-center">

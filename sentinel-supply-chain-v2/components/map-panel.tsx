@@ -12,6 +12,9 @@ interface MapPanelProps {
   isLoading: boolean;
 }
 
+const LEAFLET_LOADED = { css: false, js: false };
+let leafletLoader: Promise<void> | null = null;
+
 const HUB_COORDS: Record<string, [number, number]> = {
   Shanghai: [31.2304, 121.4737],
   Singapore: [1.2644, 103.82],
@@ -41,24 +44,34 @@ export function MapPanel({ currentRoute, shadowRoute, analyses, cascadeWarnings,
 
   useEffect(() => {
     if (typeof window === "undefined" || !mapRef.current) return;
+    let isActive = true;
 
     // Dynamically load Leaflet
     const loadLeaflet = async () => {
       if (!(window as unknown as Record<string, unknown>).L) {
-        // Load CSS
-        const link = document.createElement("link");
-        link.rel = "stylesheet";
-        link.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
-        document.head.appendChild(link);
-
-        // Load JS
-        await new Promise<void>((resolve) => {
-          const script = document.createElement("script");
-          script.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
-          script.onload = () => resolve();
-          document.head.appendChild(script);
-        });
+        if (!LEAFLET_LOADED.css) {
+          LEAFLET_LOADED.css = true;
+          const link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+          document.head.appendChild(link);
+        }
+        if (!leafletLoader) {
+          leafletLoader = new Promise<void>((resolve) => {
+            if (LEAFLET_LOADED.js) {
+              resolve();
+              return;
+            }
+            LEAFLET_LOADED.js = true;
+            const script = document.createElement("script");
+            script.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+            script.onload = () => resolve();
+            document.head.appendChild(script);
+          });
+        }
+        await leafletLoader;
       }
+      if (!isActive) return;
 
       const L = (window as unknown as Record<string, unknown>).L as {
         map: (el: HTMLElement, opts: unknown) => unknown;
@@ -87,7 +100,11 @@ export function MapPanel({ currentRoute, shadowRoute, analyses, cascadeWarnings,
 
       // Clear previous layers
       for (const layer of layersRef.current) {
-        (layer as { remove: () => void }).remove();
+        try {
+          (layer as { remove: () => void }).remove();
+        } catch {
+          // ignore stale layer handles
+        }
       }
       layersRef.current = [];
 
@@ -186,6 +203,7 @@ export function MapPanel({ currentRoute, shadowRoute, analyses, cascadeWarnings,
             <div style="font-weight:700;font-size:14px;color:${color}">${hubName}</div>
             <div style="font-size:12px;margin-top:4px;color:#94a3b8">${analysis?.reasoningLog ?? "No analysis yet."}</div>
             ${analysis ? `<div style="margin-top:6px;font-size:11px;color:#64748b">Risk: <span style="color:${color};font-weight:600">${(risk * 100).toFixed(0)}%</span> · Status: <span style="color:${color}">${status.toUpperCase()}</span></div>` : ""}
+            ${analysis ? `<div style="margin-top:4px;font-size:11px;color:#64748b">Confidence: <span style="color:#a5b4fc">${(analysis.confidence * 100).toFixed(0)}%</span> · Congestion: <span style="color:#c4b5fd">${analysis.congestionFactor.toFixed(2)}x</span>${analysis.isCascadeAffected ? " · ⚡ Cascade-affected" : ""}</div>` : ""}
             ${cascadeNote}
           </div>
         `;
@@ -205,6 +223,22 @@ export function MapPanel({ currentRoute, shadowRoute, analyses, cascadeWarnings,
     };
 
     loadLeaflet();
+
+    return () => {
+      isActive = false;
+      for (const layer of layersRef.current) {
+        try {
+          (layer as { remove: () => void }).remove();
+        } catch {
+          // ignore stale layer handles
+        }
+      }
+      layersRef.current = [];
+      if (mapInstanceRef.current) {
+        (mapInstanceRef.current as { remove: () => void }).remove();
+        mapInstanceRef.current = null;
+      }
+    };
   }, [currentRoute, shadowRoute, analyses, cascadeWarnings, compromisedHubs]);
 
   return (

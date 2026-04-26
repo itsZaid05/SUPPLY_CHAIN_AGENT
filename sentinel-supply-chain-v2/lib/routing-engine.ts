@@ -33,6 +33,21 @@ const legEtaHours: Record<string, number> = {
   "Mumbai::Dubai": 28, "Mumbai::Colombo": 18, "Colombo::Singapore": 42,
   "Dubai::Rotterdam": 168, "Cape Town::Hamburg": 204,
 };
+const vesselByLeg: Record<string, string> = {
+  "Shanghai::Singapore": "MV Meridian",
+  "Singapore::Suez": "MV Meridian",
+  "Suez::Rotterdam": "MV Meridian",
+  "Singapore::Cape Town": "MV Nereid",
+  "Cape Town::Rotterdam": "MV Atlas Relay",
+  "Singapore::Dubai": "MV Altair",
+  "Dubai::Suez": "MV Altair",
+  "Dubai::Rotterdam": "MV Euro Bridge",
+  "Shanghai::Mumbai": "MV Indus Star",
+  "Mumbai::Dubai": "MV Indus Star",
+  "Mumbai::Colombo": "MV Coral Bay",
+  "Colombo::Singapore": "MV Coral Bay",
+  "Cape Town::Hamburg": "MV Cape Runner",
+};
 
 const normalize = (a: string, b: string) => [a, b].sort().join("::");
 
@@ -91,12 +106,26 @@ const buildSegments = (path: string[], edges: WeightedEdge[]): PathSegment[] =>
     return { fromNode: node, toNode: next, distance: seg.distance, riskScore: seg.riskScore, weatherFriction: seg.weatherFriction, weight: +seg.weight.toFixed(2) };
   });
 
-const buildLegs = (path: string[]): ManifestLeg[] =>
+const buildLegs = (path: string[], segments: PathSegment[]): ManifestLeg[] =>
   path.slice(0, -1).map((origin, i) => {
     const dest = path[i + 1];
     const key = normalize(origin, dest);
     const eta = legEtaHours[key] ?? 72;
-    return { id: `shadow-leg-${i + 1}`, sequence: i + 1, origin, destination: dest, mode: "Ocean" as const, vessel: "MV Atlas Relay", etaHours: eta, riskScore: 0.18, health: "optimal" as const, note: "Alternate corridor reserved under optimizer recommendation." };
+    const seg = segments.find((s) => normalize(s.fromNode, s.toNode) === key);
+    const riskScore = seg ? +seg.riskScore.toFixed(2) : 0.18;
+    const health: ManifestLeg["health"] = riskScore >= 0.7 ? "critical" : riskScore >= 0.4 ? "warning" : "optimal";
+    return {
+      id: `shadow-leg-${i + 1}`,
+      sequence: i + 1,
+      origin,
+      destination: dest,
+      mode: "Ocean" as const,
+      vessel: vesselByLeg[key] ?? "MV Atlas Relay",
+      etaHours: eta,
+      riskScore,
+      health,
+      note: "Alternate corridor reserved under optimizer recommendation.",
+    };
   });
 
 // Dynamically computed comparison — no more hardcoded constants
@@ -113,8 +142,8 @@ const buildComparison = (
   const currentBaseEta = etaFor(currentPath);
   const shadowBaseEta = etaFor(shadowPath);
 
-  const currentDelay = Math.round(currentSegs.filter((s) => s.riskScore >= 0.45).reduce((acc, s) => acc + s.riskScore * 42, 0));
-  const shadowDelay = Math.round(shadowSegs.filter((s) => s.riskScore >= 0.45).reduce((acc, s) => acc + s.riskScore * 18, 0));
+  const currentDelay = Math.round(currentSegs.filter((s) => s.riskScore >= 0.4).reduce((acc, s) => acc + s.riskScore * 42, 0));
+  const shadowDelay = Math.round(shadowSegs.filter((s) => s.riskScore >= 0.4).reduce((acc, s) => acc + s.riskScore * 18, 0));
 
   const currentTransit = currentBaseEta + currentDelay;
   const shadowTransit = shadowBaseEta + shadowDelay;
@@ -139,12 +168,12 @@ const buildComparison = (
   };
 };
 
-const buildShadowRoute = (path: string[], totalWeight: number, comparison: ComparisonMatrix): ShadowRoute => ({
-  id: "shadow-route-1",
+const buildShadowRoute = (path: string[], totalWeight: number, comparison: ComparisonMatrix, segments: PathSegment[]): ShadowRoute => ({
+  id: `shadow-${Math.random().toString(16).slice(2, 14)}`,
   title: "Sentinel Prescribed Corridor",
   status: "available",
   nodes: path,
-  legs: buildLegs(path),
+  legs: buildLegs(path, segments),
   totalWeight: +totalWeight.toFixed(2),
   comparison,
 });
@@ -169,5 +198,5 @@ export const optimizeRoute = (req: OptimizeRouteRequest): OptimizeRouteResponse 
   })();
 
   const comparison = buildComparison(currentPath, path, currentSegs, shadowSegs, req);
-  return { path, totalWeight: +totalWeight.toFixed(2), segments: shadowSegs, shadowRoute: buildShadowRoute(path, totalWeight, comparison) };
+  return { path, totalWeight: +totalWeight.toFixed(2), segments: shadowSegs, shadowRoute: buildShadowRoute(path, totalWeight, comparison, shadowSegs) };
 };

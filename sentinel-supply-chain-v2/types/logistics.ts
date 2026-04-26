@@ -52,6 +52,9 @@ export interface HubRiskAnalysis {
   lon: number;
   riskScore: number;
   frictionCoefficient: number;
+  confidence: number;
+  congestionFactor: number;
+  isCascadeAffected: boolean;
   reasoningLog: string;
   status: HealthStatus;
   newsSummary: string;
@@ -152,6 +155,8 @@ export interface OptimizeRouteRequest {
   fuelCost: number;
   delayPenalty: number;
   carbonCost: number;
+  cargoType?: CargoType;
+  containerCount?: number;
   riskInjections: RiskInjection[];
 }
 

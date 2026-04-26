@@ -53,6 +53,10 @@ export function ChaosPanel({ isBusy, onSimulate }: ChaosPanelProps) {
   };
 
   const handleSimulate = () => {
+    if (origin === destination) {
+      alert("Origin and destination must be different hubs.");
+      return;
+    }
     const effectiveMode: ChaosMode =
       selectedHubs.length >= 3 ? "storm" : selectedHubs.length === 2 ? "cluster" : "single";
     onSimulate({
@@ -169,7 +173,18 @@ export function ChaosPanel({ isBusy, onSimulate }: ChaosPanelProps) {
           <div className="space-y-3 rounded-xl border border-white/8 bg-slate-900/40 p-3">
             <div className="space-y-1">
               <label className="text-xs text-slate-500">Origin</label>
-              <select value={origin} onChange={(e) => setOrigin(e.target.value)} className="w-full rounded-lg border border-white/10 bg-slate-900 px-2 py-1.5 text-xs text-slate-200">
+              <select
+                value={origin}
+                onChange={(e) => {
+                  const nextOrigin = e.target.value;
+                  setOrigin(nextOrigin);
+                  if (destination === nextOrigin) {
+                    const fallbackDestination = ALL_HUBS.find((hub) => hub !== nextOrigin) ?? nextOrigin;
+                    setDestination(fallbackDestination);
+                  }
+                }}
+                className="w-full rounded-lg border border-white/10 bg-slate-900 px-2 py-1.5 text-xs text-slate-200"
+              >
                 {ALL_HUBS.map((h) => <option key={h}>{h}</option>)}
               </select>
             </div>
