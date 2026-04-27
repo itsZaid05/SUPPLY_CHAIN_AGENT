@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     # Firebase
     FIREBASE_PROJECT_ID: str = ""
     FIREBASE_CREDENTIALS_PATH: str = ""
+    FIREBASE_SERVICE_ACCOUNT_JSON: str = ""
+    FIREBASE_WORLD_STATE_DOC_PATH: str = "worldState/live"
     FIRESTORE_USE_EMULATOR: bool = False
     FIRESTORE_EMULATOR_HOST: str = "localhost:8080"
 

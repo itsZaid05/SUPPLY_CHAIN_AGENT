@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   backend:
     build:
@@ -17,6 +15,9 @@ services:
       - CORS_ORIGINS=["http://localhost:3000","http://frontend:3000"]
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}
+      - FIREBASE_CREDENTIALS_PATH=${FIREBASE_CREDENTIALS_PATH:-}
+      - FIREBASE_SERVICE_ACCOUNT_JSON=${FIREBASE_SERVICE_ACCOUNT_JSON:-}
+      - FIREBASE_WORLD_STATE_DOC_PATH=${FIREBASE_WORLD_STATE_DOC_PATH:-worldState/live}
     networks:
       - sentinel-net
     healthcheck:
@@ -30,11 +31,18 @@ services:
     build:
       context: ./sentinel-supply-chain-v2
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_FASTAPI_BASE_URL: ${NEXT_PUBLIC_FASTAPI_BASE_URL:-http://localhost:8000}
+        NEXT_PUBLIC_FIREBASE_API_KEY: ${NEXT_PUBLIC_FIREBASE_API_KEY:-}
+        NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:-}
+        NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${NEXT_PUBLIC_FIREBASE_PROJECT_ID:-}
+        NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:-}
+        NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:-}
+        NEXT_PUBLIC_FIREBASE_APP_ID: ${NEXT_PUBLIC_FIREBASE_APP_ID:-}
+        NEXT_PUBLIC_FIREBASE_WORLD_STATE_PATH: ${NEXT_PUBLIC_FIREBASE_WORLD_STATE_PATH:-worldState/live}
     container_name: sentinel-frontend
     ports:
       - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_FASTAPI_BASE_URL=http://backend:8000
     depends_on:
       backend:
         condition: service_healthy
