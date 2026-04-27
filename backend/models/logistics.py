@@ -1,12 +1,24 @@
 """Pydantic models for supply chain logistics data."""
 from typing import Literal, Optional
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
+from pydantic.alias_generators import to_camel
+
+
+# ─── Base Model with CamelCase Aliases ────────────────────────────────────
+
+class CamelModel(BaseModel):
+    """Base model that converts snake_case to camelCase for JSON serialization."""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,  # Accept both snake_case and camelCase on input
+    )
 
 
 # ─── Request Models ───────────────────────────────────────────────────────
 
-class AnalyzeRouteRequest(BaseModel):
+class AnalyzeRouteRequest(CamelModel):
     """Request payload for route analysis."""
 
     hubs: list[str] = Field(..., description="List of hub names in the route")
@@ -17,7 +29,7 @@ class AnalyzeRouteRequest(BaseModel):
     chaos_mode: Literal["single", "cluster", "storm"] = Field("single", description="Type of disruption")
 
 
-class HubRiskAnalysis(BaseModel):
+class HubRiskAnalysis(CamelModel):
     """Hub risk analysis result from Gemini."""
 
     hub_name: str
@@ -38,7 +50,7 @@ class HubRiskAnalysis(BaseModel):
     cascade_degree: Optional[int] = None
 
 
-class CascadeWarning(BaseModel):
+class CascadeWarning(CamelModel):
     """Cascade propagation warning."""
 
     hub_name: str
@@ -48,7 +60,7 @@ class CascadeWarning(BaseModel):
     reason: str = Field("", description="Why cascade occurred")
 
 
-class ComparisonMatrix(BaseModel):
+class ComparisonMatrix(CamelModel):
     """Route comparison metrics."""
 
     current_delay_hours: float = 0.0
@@ -65,7 +77,7 @@ class ComparisonMatrix(BaseModel):
     roi_multiplier: float = 1.0
 
 
-class ManifestLeg(BaseModel):
+class ManifestLeg(CamelModel):
     """Single leg of a shipping manifest."""
 
     id: str
@@ -80,7 +92,7 @@ class ManifestLeg(BaseModel):
     note: str = ""
 
 
-class ShadowRoute(BaseModel):
+class ShadowRoute(CamelModel):
     """Alternative route recommendation."""
 
     id: str
@@ -92,7 +104,7 @@ class ShadowRoute(BaseModel):
     comparison: ComparisonMatrix
 
 
-class WorldStateEvent(BaseModel):
+class WorldStateEvent(CamelModel):
     """Terminal event for real-time UI streaming."""
 
     id: str
@@ -103,7 +115,7 @@ class WorldStateEvent(BaseModel):
     hub_name: Optional[str] = None
 
 
-class WorldStateDocument(BaseModel):
+class WorldStateDocument(CamelModel):
     """Complete state snapshot for Firestore."""
 
     analysis_run_id: str
@@ -121,7 +133,7 @@ class WorldStateDocument(BaseModel):
 
 # ─── Response Models ──────────────────────────────────────────────────────
 
-class AnalyzeRouteResponse(BaseModel):
+class AnalyzeRouteResponse(CamelModel):
     """Response from /analyze-route endpoint."""
 
     analysis_run_id: str
@@ -133,7 +145,7 @@ class AnalyzeRouteResponse(BaseModel):
     world_state: WorldStateDocument
 
 
-class PrescriptivePathRequest(BaseModel):
+class PrescriptivePathRequest(CamelModel):
     """Request for route optimization."""
 
     analysis_run_id: Optional[str] = None
@@ -148,7 +160,7 @@ class PrescriptivePathRequest(BaseModel):
     container_count: int = 1
 
 
-class PrescriptivePathResponse(BaseModel):
+class PrescriptivePathResponse(CamelModel):
     """Response from /get-prescriptive-path endpoint."""
 
     analysis_run_id: str
@@ -166,7 +178,7 @@ class PrescriptivePathResponse(BaseModel):
     world_state: WorldStateDocument
 
 
-class RouteExplanation(BaseModel):
+class RouteExplanation(CamelModel):
     """AI-generated reroute explanation."""
 
     summary: str
@@ -177,7 +189,7 @@ class RouteExplanation(BaseModel):
     alternatives_considered: list[str]
 
 
-class ExplainRerouteRequest(BaseModel):
+class ExplainRerouteRequest(CamelModel):
     """Request for reroute explanation."""
 
     current_route: list[str]
@@ -187,7 +199,7 @@ class ExplainRerouteRequest(BaseModel):
     cascade_warnings: list[CascadeWarning] = Field(default_factory=list)
 
 
-class ExplainRerouteResponse(BaseModel):
+class ExplainRerouteResponse(CamelModel):
     """Response from /explain-reroute endpoint."""
 
     explanation: RouteExplanation

@@ -1,13 +1,10 @@
 """FastAPI application - Supply Chain Resilience System."""
-import asyncio
-import json
 import logging
 import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 from datetime import datetime
 
 from config import settings
@@ -143,7 +140,7 @@ async def get_prescriptive_path(request: PrescriptivePathRequest) -> Prescriptiv
             compromised_hubs=[a.hub_name for a in request.hub_analyses if a.risk_score > 0.5],
             cascade_warnings=[],
             warnings=[],
-            shadow_route=shadow_route.model_dump(),
+            shadow_route=shadow_route.model_dump(by_alias=True),
         )
         world_state.status = "rerouted"
 
@@ -211,166 +208,6 @@ async def get_config():
         "capacity_threshold": settings.CAPACITY_THRESHOLD,
         "exponential_penalty_factor": settings.EXPONENTIAL_PENALTY_FACTOR,
     }
-
-
-# ─── SSE: Real-time streaming analysis ───────────────────────────────────────
-
-@app.post("/analyze-route-stream")
-async def analyze_route_stream(request: AnalyzeRouteRequest):
-    """Server-Sent Events endpoint that streams reasoning logs as they are produced.
-
-    Each SSE event is a JSON object with shape:
-        { "type": "log" | "analysis" | "cascade" | "complete" | "error",
-          "data": { ... } }
-
-    The client connects once and receives events in real time as each hub is
-    analysed — no polling, no batch wait.
-    """
-
-    async def event_stream():
-        analysis_run_id = str(uuid.uuid4())
-
-        def sse(event_type: str, payload: dict) -> str:
-            """Format a single SSE frame."""
-            return f"data: {json.dumps({'type': event_type, 'data': payload, 'run_id': analysis_run_id})}\n\n"
-
-        try:
-            yield sse("log", {
-                "source": "system",
-                "tone": "info",
-                "message": f"Stream open · run {analysis_run_id[:8]} · {len(request.hubs)} hub(s)",
-            })
-
-            all_analyses = []
-            compromised: set[str] = []
-            warnings: list[str] = []
-
-            # ── Phase 1: analyse hubs one-by-one, streaming each result ──
-            from services.live_data import fetch_hub_context
-            from utils.mock_data import get_hub_coordinates
-
-            for hub_name in request.hubs:
-                coords = get_hub_coordinates(hub_name)
-                if not coords:
-                    yield sse("log", {
-                        "source": "system",
-                        "tone": "warning",
-                        "message": f"Hub {hub_name} not found in catalog — skipping",
-                    })
-                    continue
-
-                yield sse("log", {
-                    "source": "signal",
-                    "tone": "info",
-                    "message": f"Fetching live context for {hub_name} ({coords[0]:.2f}°N, {coords[1]:.2f}°E)…",
-                })
-
-                hub_ctx = await fetch_hub_context(hub_name)
-
-                news_badge = "LIVE" if hub_ctx["news_is_live"] else "FALLBACK"
-                wx_badge = "LIVE" if hub_ctx["weather_is_live"] else "FALLBACK"
-
-                yield sse("log", {
-                    "source": "signal",
-                    "tone": "info",
-                    "message": (
-                        f"{hub_name} · News [{news_badge}]: {hub_ctx['news_context'][:80]}… "
-                        f"· Weather [{wx_badge}]: {hub_ctx['weather_summary']}"
-                    ),
-                })
-
-                chaos_sev = request.chaos_severity if hub_name in request.chaos_hubs else 0.0
-
-                yield sse("log", {
-                    "source": "risk",
-                    "tone": "info",
-                    "message": f"Gemini reasoning for {hub_name} (chaos={chaos_sev:.0%})…",
-                })
-
-                analysis = await gemini_reasoner.evaluate_hub_risk(
-                    hub_name=hub_name,
-                    chaos_severity=chaos_sev,
-                    news_context=hub_ctx["news_context"],
-                    weather_friction=hub_ctx["weather_friction"],
-                )
-                analysis.weather_summary = hub_ctx["weather_summary"]
-                all_analyses.append(analysis)
-
-                if analysis.risk_score > 0.5:
-                    compromised.append(hub_name)
-
-                tone = "critical" if analysis.risk_score > 0.7 else "warning" if analysis.risk_score > 0.4 else "info"
-                yield sse("log", {
-                    "source": "risk",
-                    "tone": tone,
-                    "message": (
-                        f"{hub_name} scored {analysis.risk_score:.2f} · "
-                        f"status={analysis.status} · {analysis.reasoning_log[:100]}"
-                    ),
-                })
-
-                # Stream the full analysis object so the frontend can render the map immediately
-                yield sse("analysis", analysis.model_dump(mode="json"))
-
-                # Small yield to flush the buffer
-                await asyncio.sleep(0)
-
-            # ── Phase 2: cascade detection ────────────────────────────────
-            yield sse("log", {
-                "source": "cascade",
-                "tone": "info",
-                "message": f"Running cascade propagation · {len(compromised)} compromised hub(s)…",
-            })
-
-            cascade_warnings = route_analyzer._detect_cascades(all_analyses, set(compromised))
-
-            for cw in cascade_warnings:
-                yield sse("log", {
-                    "source": "cascade",
-                    "tone": "warning",
-                    "message": (
-                        f"Cascade deg-{cw.degree}: {cw.origin_disruption} → {cw.hub_name} "
-                        f"(propagated risk {cw.propagated_risk:.2f})"
-                    ),
-                })
-
-            # ── Phase 3: world state + Firestore ─────────────────────────
-            world_state = await route_analyzer.create_world_state_document(
-                analysis_run_id=analysis_run_id,
-                current_route=request.current_route,
-                analyses=all_analyses,
-                compromised_hubs=compromised,
-                cascade_warnings=cascade_warnings,
-                warnings=warnings,
-            )
-            await firestore_manager.write_world_state(analysis_run_id, world_state)
-
-            yield sse("log", {
-                "source": "optimizer",
-                "tone": "success",
-                "message": f"Analysis complete · {len(all_analyses)} hubs · {len(cascade_warnings)} cascades · written to Firestore",
-            })
-
-            # Final complete event with full response payload
-            yield sse("complete", {
-                "analysis_run_id": analysis_run_id,
-                "status": "ok" if not warnings else "degraded",
-                "compromised_hubs": compromised,
-                "cascade_count": len(cascade_warnings),
-            })
-
-        except Exception as e:
-            logger.error(f"SSE stream error: {e}")
-            yield sse("error", {"message": str(e)})
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # disable nginx buffering
-        },
-    )
 
 
 if __name__ == "__main__":

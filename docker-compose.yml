@@ -14,7 +14,7 @@ services:
       - DEBUG=False
       - BACKEND_HOST=0.0.0.0
       - BACKEND_PORT=8000
-      - CORS_ORIGINS=["http://localhost:3000"]
+      - CORS_ORIGINS=["http://localhost:3000","http://frontend:3000"]
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}
     volumes:
@@ -36,7 +36,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_FASTAPI_BASE_URL=http://localhost:8000
+      - NEXT_PUBLIC_FASTAPI_BASE_URL=http://backend:8000
     depends_on:
       backend:
         condition: service_healthy
