@@ -82,6 +82,23 @@ export function analyzeRouteStream(
 ): AbortController {
   const controller = new AbortController();
 
+  const fallBackToPost = async () => {
+    const response = await analyzeRoute(payload);
+    for (const analysis of response.analyses) {
+      callbacks.onAnalysis(analysis, response.analysisRunId);
+    }
+    callbacks.onComplete(
+      {
+        compromised_hubs: response.compromisedHubs,
+        compromisedHubs: response.compromisedHubs,
+        cascade_warnings: response.cascadeWarnings,
+        cascadeWarnings: response.cascadeWarnings,
+        warnings: response.warnings,
+      },
+      response.analysisRunId,
+    );
+  };
+
   (async () => {
     try {
       const response = await fetch(`${backendBaseUrl}/analyze-route-stream`, {
@@ -92,7 +109,7 @@ export function analyzeRouteStream(
       });
 
       if (!response.ok || !response.body) {
-        callbacks.onError(`Stream failed: ${response.statusText}`);
+        await fallBackToPost();
         return;
       }
 
@@ -135,7 +152,11 @@ export function analyzeRouteStream(
       }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
-        callbacks.onError(err instanceof Error ? err.message : "Stream connection failed");
+        try {
+          await fallBackToPost();
+        } catch (fallbackErr) {
+          callbacks.onError(fallbackErr instanceof Error ? fallbackErr.message : "Backend connection failed");
+        }
       }
     }
   })();
