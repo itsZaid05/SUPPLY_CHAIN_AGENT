@@ -17,12 +17,10 @@ services:
       - CORS_ORIGINS=["http://localhost:3000","http://frontend:3000"]
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}
-    volumes:
-      - ./backend:/app
     networks:
       - sentinel-net
     healthcheck:
-      test: ["CMD", "wget", "--spider", "http://127.0.0.1:3000/api/health"]
+      test: ["CMD", "wget", "--spider", "http://127.0.0.1:8000/health"]  # ← fixed port & path
       interval: 10s
       timeout: 5s
       retries: 5
@@ -42,14 +40,8 @@ services:
         condition: service_healthy
     networks:
       - sentinel-net
-    volumes:
-      - ./sentinel-supply-chain-v2:/app
-      - /app/.next
+    # removed volume mounts — they override the built image
 
 networks:
   sentinel-net:
     driver: bridge
-
-volumes:
-  backend-data:
-  frontend-data:
