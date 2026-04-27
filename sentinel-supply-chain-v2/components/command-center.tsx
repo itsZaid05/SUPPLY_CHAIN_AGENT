@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, Bot, Globe, Map as MapIcon, Radar, Route, Zap } from "lucide-react";
 import { onSnapshot } from "firebase/firestore";
 
-import { analyzeRoute, explainReroute, getPrescriptivePath } from "@/lib/backend-client";
+import { analyzeRoute, analyzeRouteStream, explainReroute, getPrescriptivePath } from "@/lib/backend-client";
+import type { StreamLogPayload } from "@/lib/backend-client";
 import {
   currentRoute as defaultRoute,
   defaultAnalyzeRouteRequest,
@@ -119,6 +120,7 @@ export function CommandCenter() {
 
   const processedEventIds = useRef<Set<string>>(new Set());
   const activeRunId = useRef<string | null>(null);
+  const activeStream = useRef<AbortController | null>(null);
 
   // ─── Terminal queue drain ────────────────────────────────────────────────
   useEffect(() => {
@@ -194,6 +196,10 @@ export function CommandCenter() {
     const { chaosHubs, severity, scenario } = params;
     setLastScenario(scenario);
 
+    // Cancel any running stream
+    activeStream.current?.abort();
+    activeStream.current = null;
+
     processedEventIds.current = new Set();
     activeRunId.current = null;
     setDashboardStatus("Analyzing");
@@ -209,39 +215,63 @@ export function CommandCenter() {
     setExplanation(null);
 
     setTerminalQueue([
-      createEntry(`Sentinel analysis armed · ${chaosHubs.length} hub(s) targeted at severity ${(severity * 100).toFixed(0)}%`, "system", "info"),
+      createEntry(`Sentinel stream armed · ${chaosHubs.length} hub(s) at severity ${(severity * 100).toFixed(0)}%`, "system", "info"),
       createEntry(`Scenario: ${scenario.origin} → ${scenario.destination} · ${scenario.containerCount} TEUs · ${scenario.cargoType}`, "system", "info"),
-      createEntry("Dispatching FastAPI ingestion loop — live hub analysis commencing.", "system", "info"),
+      createEntry("Opening SSE stream — live hub analysis commencing.", "system", "info"),
     ]);
 
+    const analyzeReq = defaultAnalyzeRouteRequest(chaosHubs, severity, scenario);
+
+    // Accumulate analyses from the stream so we can feed them into Phase 2
+    const streamedAnalyses: HubRiskAnalysis[] = [];
+    let streamRunId: string | null = null;
+    let streamCompromised: string[] = [];
+
+    await new Promise<void>((resolve) => {
+      const controller = analyzeRouteStream(analyzeReq, {
+        onLog: (payload: StreamLogPayload) => {
+          setTerminalQueue((c) => [
+            ...c,
+            createEntry(
+              payload.message,
+              payload.source as TerminalEntry["source"],
+              payload.tone as TerminalEntry["tone"],
+            ),
+          ]);
+        },
+        onAnalysis: (analysis: HubRiskAnalysis, runId: string) => {
+          streamRunId = runId;
+          streamedAnalyses.push(analysis);
+          // Incrementally update the map as each hub resolves
+          setHubAnalyses([...streamedAnalyses]);
+          setManifest(applyAnalysesToManifest(stableManifest, streamedAnalyses));
+        },
+        onComplete: (payload, runId) => {
+          streamRunId = runId;
+          streamCompromised = (payload.compromised_hubs as string[]) ?? [];
+          setCompromisedHubs(streamCompromised);
+          resolve();
+        },
+        onError: (message) => {
+          setTerminalQueue((c) => [...c, createEntry(`Stream error: ${message}`, "system", "critical")]);
+          setIsLoadingAlternate(false);
+          resolve();
+        },
+      });
+      activeStream.current = controller;
+    });
+
+    // Phase 2: Dijkstra optimisation (regular POST — fast, no streaming needed)
+    if (streamedAnalyses.length === 0) {
+      setIsLoadingAlternate(false);
+      return;
+    }
+
     try {
-      const analyzeReq = defaultAnalyzeRouteRequest(chaosHubs, severity, scenario);
-      const analyzeRes = await analyzeRoute(analyzeReq);
-
-      ingestWorldState(analyzeRes.worldState);
-      setHubAnalyses(analyzeRes.analyses);
-      setCompromisedHubs(analyzeRes.compromisedHubs);
-      setCascadeWarnings(analyzeRes.cascadeWarnings ?? []);
-      setActiveRouteNodes(analyzeReq.currentRoute);
-
-      if (analyzeRes.cascadeWarnings?.length) {
-        setTerminalQueue((c) => [
-          ...c,
-          createEntry(
-            `Cascade propagation detected: ${analyzeRes.cascadeWarnings.map((w) => `${w.hubName} (deg ${w.degree})`).join(", ")}`,
-            "cascade",
-            "warning",
-          ),
-        ]);
-      }
-
-      if (analyzeRes.warnings.length > 0) {
-        setTerminalQueue((c) => [...c, createEntry(`Degraded data sources: ${analyzeRes.warnings[0]}`, "system", "warning")]);
-      }
-
       setTerminalQueue((c) => [...c, createEntry("Hub analysis complete. Computing optimal Dijkstra corridor…", "optimizer", "info")]);
 
-      const prescriptiveReq = defaultPrescriptiveRouteRequest(analyzeRes.analyses, analyzeRes.analysisRunId, scenario);
+      setActiveRouteNodes(analyzeReq.currentRoute);
+      const prescriptiveReq = defaultPrescriptiveRouteRequest(streamedAnalyses, streamRunId ?? undefined, scenario);
       const prescriptiveRes: PrescriptivePathResponse = await getPrescriptivePath(prescriptiveReq);
 
       ingestWorldState(prescriptiveRes.worldState);
@@ -259,9 +289,8 @@ export function CommandCenter() {
           "success",
         ),
       ]);
-
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "FastAPI orchestration failed.";
+      const msg = err instanceof Error ? err.message : "FastAPI optimisation failed.";
       setIsLoadingAlternate(false);
       setTerminalQueue((c) => [...c, createEntry(msg, "optimizer", "critical")]);
     }
