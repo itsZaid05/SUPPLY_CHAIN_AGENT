@@ -1,0 +1,19 @@
+{
+  "framework": "nextjs",
+  "installCommand": "npm install",
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
+  "regions": [
+    "asia-southeast1"
+  ],
+  "experimentalServices": {
+    "frontend": {
+      "routePrefix": "/",
+      "framework": "nextjs"
+    },
+    "routing_engine": {
+      "entrypoint": "services/routing_engine",
+      "routePrefix": "/_/routing_engine"
+    }
+  }
+}

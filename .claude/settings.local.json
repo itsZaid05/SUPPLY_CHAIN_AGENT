@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(firebase apps:list *)",
+      "Bash(firebase firestore:databases:list)",
+      "Bash(firebase apps:sdkconfig)",
+      "Bash(gcloud run *)",
+      "Bash(firebase deploy *)",
+      "Bash(npm run *)"
+    ]
+  }
+}

@@ -1,13 +1,4 @@
 {
-  "hosting": {
-    "source": ".",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**",
-      ".next/**"
-    ]
-  },
   "firestore": {
     "database": "(default)",
     "location": "asia-southeast1",
