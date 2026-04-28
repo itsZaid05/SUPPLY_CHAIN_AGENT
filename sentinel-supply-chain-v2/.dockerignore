@@ -1,0 +1,14 @@
+.env
+.env.local
+.next/
+node_modules/
+.npm-cache/
+out/
+dist/
+coverage/
+.vercel/
+*.log
+__pycache__/
+*.py[cod]
+firebase-credentials.json
+*.pem
